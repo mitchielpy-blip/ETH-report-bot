@@ -21,6 +21,7 @@ Setup:
 import os
 import sys
 import time
+import json
 import requests
 from datetime import datetime, timezone, timedelta
 
@@ -29,8 +30,12 @@ SGT = timezone(timedelta(hours=8))  # Singapore Time, UTC+8, no DST
 OKX_BASE = "https://www.okx.com"
 INST_ID = os.environ.get("INST_ID", "ETH-USDT-SWAP")   # perpetual swap
 BAR = os.environ.get("BAR", "1H")                       # candle size
+HTF_BAR = os.environ.get("HTF_BAR", "4H")                # higher-timeframe filter
 LOOKBACK = 200                                            # candles to pull
 WEBHOOK_URL = os.environ.get("DISCORD_WEBHOOK_URL")
+STATE_FILE = os.environ.get("STATE_FILE", "state.json")
+MAX_RETRIES = 3
+RETRY_BACKOFF_SECONDS = 2
 
 # Trade-plan heuristics (all tunable). None of this is validated against
 # real performance — treat as a starting template for your own rules.
@@ -44,11 +49,25 @@ def fetch_candles(inst_id=INST_ID, bar=BAR, limit=LOOKBACK):
     """OKX returns newest-first: [ts,o,h,l,c,vol,volCcy,volCcyQuote,confirm]"""
     url = f"{OKX_BASE}/api/v5/market/candles"
     params = {"instId": inst_id, "bar": bar, "limit": str(limit)}
-    r = requests.get(url, params=params, timeout=10)
-    r.raise_for_status()
-    data = r.json()
-    if data.get("code") != "0":
-        raise RuntimeError(f"OKX error: {data}")
+
+    last_err = None
+    for attempt in range(1, MAX_RETRIES + 1):
+        try:
+            r = requests.get(url, params=params, timeout=10)
+            r.raise_for_status()
+            data = r.json()
+            if data.get("code") != "0":
+                raise RuntimeError(f"OKX error: {data}")
+            break
+        except (requests.RequestException, RuntimeError, ValueError) as e:
+            last_err = e
+            if attempt < MAX_RETRIES:
+                wait = RETRY_BACKOFF_SECONDS * attempt
+                print(f"fetch_candles attempt {attempt} failed ({e}); retrying in {wait}s", file=sys.stderr)
+                time.sleep(wait)
+    else:
+        raise RuntimeError(f"fetch_candles failed after {MAX_RETRIES} attempts: {last_err}")
+
     rows = data["data"]
     rows.reverse()  # oldest -> newest
     candles = [
@@ -144,7 +163,22 @@ def support_resistance(candles, lookback=40, n_levels=3):
     return supports, resistances
 
 
-def suggest_trade_plan(price, score, atr_value, supports, resistances):
+def higher_timeframe_trend(bar=HTF_BAR):
+    """Fetch a higher timeframe and return 'bullish' / 'bearish' via EMA20 vs EMA50."""
+    try:
+        htf_candles = fetch_candles(bar=bar, limit=100)
+    except Exception as e:
+        print(f"Could not fetch higher-timeframe data ({e}); skipping HTF filter.", file=sys.stderr)
+        return None
+    closes = [c["close"] for c in htf_candles]
+    if len(closes) < 20:
+        return None
+    e20 = ema(closes, 20)[-1]
+    e50 = ema(closes, min(50, len(closes)))[-1]
+    return "bullish" if e20 > e50 else "bearish"
+
+
+def suggest_trade_plan(price, score, atr_value, supports, resistances, htf_trend=None):
     """
     Rule-based entry/SL/TP suggestion. Returns a dict, or None if no setup
     clears the minimum reward:risk bar (mirrors "RR不合格，不開倉" logic).
@@ -160,6 +194,11 @@ def suggest_trade_plan(price, score, atr_value, supports, resistances):
         direction = "short"
     else:
         return {"direction": None, "reason": "Signal isn't clear enough (score is in the neutral zone) — sitting out this hour."}
+
+    if htf_trend == "bearish" and direction == "long":
+        return {"direction": None, "reason": f"{HTF_BAR} trend is bearish — skipping long to avoid fighting the higher timeframe."}
+    if htf_trend == "bullish" and direction == "short":
+        return {"direction": None, "reason": f"{HTF_BAR} trend is bullish — skipping short to avoid fighting the higher timeframe."}
 
     if direction == "long":
         nearest_support = max([s for s in supports if s < price], default=None)
@@ -218,12 +257,15 @@ def build_report(candles):
     nearest_support = max([s for s in supports if s < price], default=supports[0] if supports else None)
     nearest_resistance = min([res for res in resistances if res > price], default=resistances[0] if resistances else None)
     atr_value = atr(candles)
-    plan = suggest_trade_plan(price, score, atr_value, supports, resistances)
+    htf_trend = higher_timeframe_trend()
+    plan = suggest_trade_plan(price, score, atr_value, supports, resistances, htf_trend)
 
     lines = []
     lines.append(f"**ETH Hourly Report · {datetime.now(SGT).strftime('%Y-%m-%d %H:%M')} SGT**")
     lines.append(f"Price: ${price:,.2f}")
-    lines.append(f"Trend: {trend}, {momentum}")
+    lines.append(f"Trend ({BAR}): {trend}, {momentum}")
+    if htf_trend:
+        lines.append(f"Higher-TF trend ({HTF_BAR}): {htf_trend}")
     lines.append(f"RSI(14): {r:.1f}" if r else "RSI: insufficient data")
     lines.append(f"MACD histogram: {hist:+.2f}")
     lines.append(f"Bias score: {score}/100 (a rough heuristic, not a win rate)")
@@ -247,7 +289,33 @@ def build_report(candles):
         lines.append(plan["reason"])
 
     lines.append("\n_Auto-generated from technical indicators only — not a win rate, not investment advice. Entry levels are rule-based estimates. Confirm risk and position size yourself before placing any order._")
-    return "\n".join(lines)
+    return "\n".join(lines), plan
+
+
+def load_state():
+    try:
+        with open(STATE_FILE, "r") as f:
+            return json.load(f)
+    except (FileNotFoundError, json.JSONDecodeError):
+        return {}
+
+
+def save_state(state):
+    with open(STATE_FILE, "w") as f:
+        json.dump(state, f)
+
+
+def should_post(plan, previous_state):
+    """
+    Only suppress consecutive identical "no entry" reports so a choppy
+    market doesn't spam the channel every hour. Any active directional
+    signal, or a change in direction, always posts.
+    """
+    current_direction = plan["direction"]
+    previous_direction = previous_state.get("direction")
+    if current_direction is None and previous_direction is None:
+        return False
+    return True
 
 
 def post_to_discord(content):
@@ -255,10 +323,23 @@ def post_to_discord(content):
         print("DISCORD_WEBHOOK_URL not set — printing report instead:\n")
         print(content)
         return
-    resp = requests.post(WEBHOOK_URL, json={"content": content}, timeout=10)
-    if resp.status_code >= 300:
-        print(f"Discord post failed ({resp.status_code}): {resp.text}", file=sys.stderr)
-        sys.exit(1)
+
+    last_err = None
+    for attempt in range(1, MAX_RETRIES + 1):
+        try:
+            resp = requests.post(WEBHOOK_URL, json={"content": content}, timeout=10)
+            if resp.status_code < 300:
+                return
+            last_err = f"{resp.status_code}: {resp.text}"
+        except requests.RequestException as e:
+            last_err = str(e)
+        if attempt < MAX_RETRIES:
+            wait = RETRY_BACKOFF_SECONDS * attempt
+            print(f"post_to_discord attempt {attempt} failed ({last_err}); retrying in {wait}s", file=sys.stderr)
+            time.sleep(wait)
+
+    print(f"Discord post failed after {MAX_RETRIES} attempts: {last_err}", file=sys.stderr)
+    sys.exit(1)
 
 
 def main():
@@ -266,8 +347,16 @@ def main():
     if len(candles) < 30:
         print("Not enough candle data returned.", file=sys.stderr)
         sys.exit(1)
-    report = build_report(candles)
-    post_to_discord(report)
+
+    report, plan = build_report(candles)
+    previous_state = load_state()
+
+    if should_post(plan, previous_state):
+        post_to_discord(report)
+    else:
+        print("No change from previous no-entry signal — skipping post to avoid noise.")
+
+    save_state({"direction": plan["direction"]})
 
 
 if __name__ == "__main__":
