@@ -359,6 +359,25 @@ def build_report(candles):
     return "\n".join(lines), plan
 
 
+def fetch_ticker_price(inst_id=None):
+    """Lightweight single current-price check — much cheaper than a full candle fetch."""
+    inst_id = inst_id or INST_ID
+    last_err = None
+    for attempt in range(1, MAX_RETRIES + 1):
+        try:
+            r = requests.get(f"{OKX_BASE}/api/v5/market/ticker", params={"instId": inst_id}, timeout=10)
+            r.raise_for_status()
+            data = r.json()
+            if data.get("code") != "0" or not data.get("data"):
+                raise RuntimeError(f"OKX ticker error: {data}")
+            return float(data["data"][0]["last"])
+        except (requests.RequestException, RuntimeError, ValueError, KeyError, IndexError) as e:
+            last_err = e
+            if attempt < MAX_RETRIES:
+                time.sleep(RETRY_BACKOFF_SECONDS * attempt)
+    raise RuntimeError(f"fetch_ticker_price failed after {MAX_RETRIES} attempts: {last_err}")
+
+
 def load_state():
     try:
         with open(STATE_FILE, "r") as f:
@@ -450,7 +469,17 @@ def main():
     else:
         print("No change from previous no-entry signal — skipping post to avoid noise.")
 
-    save_state({"direction": plan["direction"]})
+    new_state = {"direction": plan["direction"]}
+    if plan["direction"]:
+        new_state.update({
+            "entry": plan["entry"],
+            "stop": plan["stop"],
+            "target": plan["target"],
+            "rr": plan["rr"],
+            "generated_at_ts": int(datetime.now(timezone.utc).timestamp() * 1000),
+            "filled": False,
+        })
+    save_state(new_state)
 
 
 if __name__ == "__main__":
