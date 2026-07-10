@@ -20,10 +20,10 @@ jobs:
       - run: python eth_report_bot.py
         env:
           DISCORD_WEBHOOK_URL: ${{ secrets.DISCORD_WEBHOOK_URL }}
-      - name: Save signal state
+      - name: Save signal state and log
         run: |
           git config user.name "eth-report-bot"
           git config user.email "actions@github.com"
-          git add state.json
-          git diff --staged --quiet || git commit -m "Update signal state [skip ci]"
+          git add state.json signals_log.csv
+          git diff --staged --quiet || git commit -m "Update signal state and log [skip ci]"
           git push
