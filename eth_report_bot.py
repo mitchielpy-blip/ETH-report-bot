@@ -22,7 +22,9 @@ import os
 import sys
 import time
 import requests
-from datetime import datetime, timezone
+from datetime import datetime, timezone, timedelta
+
+SGT = timezone(timedelta(hours=8))  # Singapore Time, UTC+8, no DST
 
 OKX_BASE = "https://www.okx.com"
 INST_ID = os.environ.get("INST_ID", "ETH-USDT-SWAP")   # perpetual swap
@@ -219,7 +221,7 @@ def build_report(candles):
     plan = suggest_trade_plan(price, score, atr_value, supports, resistances)
 
     lines = []
-    lines.append(f"**ETH Hourly Report · {datetime.now(timezone.utc).strftime('%Y-%m-%d %H:%M UTC')}**")
+    lines.append(f"**ETH Hourly Report · {datetime.now(SGT).strftime('%Y-%m-%d %H:%M')} SGT**")
     lines.append(f"Price: ${price:,.2f}")
     lines.append(f"Trend: {trend}, {momentum}")
     lines.append(f"RSI(14): {r:.1f}" if r else "RSI: insufficient data")
