@@ -2,7 +2,7 @@ name: ETH Hourly Report
 
 on:
   schedule:
-    - cron: "0 * * * *"   # every hour, on the hour (UTC)
+    - cron: "7 * * * *"   # every hour at :07 — avoids GitHub's top-of-hour congestion
   workflow_dispatch: {}     # lets you also trigger it manually from GitHub
 
 permissions:
