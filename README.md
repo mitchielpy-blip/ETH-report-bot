@@ -9,10 +9,41 @@ quick glance, not a signal to trade on.
 
 ## What you get in the report
 - Current price
-- Trend (EMA20 vs EMA50) + momentum (MACD histogram)
+- Trend (EMA20 vs EMA50) + momentum (MACD histogram) on the 1H timeframe
+- A 4H higher-timeframe trend check — trade suggestions that would fight
+  the bigger trend are automatically suppressed
 - RSI(14)
 - A rough 0–100 bias score
 - Clustered support/resistance levels from the last 40 hourly candles
+- **A rule-based entry / stop-loss / take-profit suggestion**, but only
+  when the setup clears a minimum reward:risk bar AND agrees with the
+  4H trend — otherwise it tells you it's sitting out
+
+### Reliability
+- Network calls to OKX and Discord retry automatically (up to 3 attempts
+  with backoff) instead of silently failing on a hiccup.
+- Consecutive "no entry" hours are suppressed so a choppy market doesn't
+  spam the channel every hour — any active or newly-changed signal always
+  posts. This works by committing a small `state.json` file back to the
+  repo after each run (that's why the workflow needs `contents: write`
+  permission and a commit/push step — already included).
+
+### How the trade plan is built (all tunable via env vars)
+- **Direction**: only proposed when the bias score is clearly one-sided
+  (`LONG_SCORE_MIN` / `SHORT_SCORE_MAX`, default 62 / 38). Middling scores
+  → no plan.
+- **Higher-timeframe filter**: if the 4H trend disagrees with the proposed
+  direction, the plan is dropped (change with `HTF_BAR`, default `4H`).
+- **Entry**: a pullback to the nearest support (long) / resistance (short)
+  rather than chasing the current price.
+- **Stop-loss**: ATR(14) × `ATR_SL_MULT` (default 1.5) beyond entry — scales
+  with current volatility instead of a fixed dollar amount.
+- **Take-profit**: the next support/resistance level in that direction.
+- **Gate**: if the resulting reward:risk is below `MIN_RR` (default 1.5),
+  no plan is published — you just get the reason why.
+
+This is a rule template, not a backtested strategy. Adjust the thresholds
+to match how your own pullback method actually behaves before trusting it.
 
 ## Setup (free, runs on GitHub — no server needed)
 
