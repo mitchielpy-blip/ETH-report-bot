@@ -11,6 +11,10 @@ on:
         description: "Candle timeframe (1H, 15m, 4H)"
         required: false
         default: "1H"
+      end_date:
+        description: "Optional: end date for the window, e.g. 2024-06-01 (leave blank for most recent data)"
+        required: false
+        default: ""
 
 jobs:
   backtest:
@@ -21,7 +25,13 @@ jobs:
         with:
           python-version: "3.12"
       - run: pip install -r requirements.txt
-      - run: python backtest.py --months "${{ github.event.inputs.months }}" --bar "${{ github.event.inputs.bar }}"
+      - name: Run backtest
+        run: |
+          ARGS="--months ${{ github.event.inputs.months }} --bar ${{ github.event.inputs.bar }}"
+          if [ -n "${{ github.event.inputs.end_date }}" ]; then
+            ARGS="$ARGS --end-date ${{ github.event.inputs.end_date }}"
+          fi
+          python backtest.py $ARGS
       - name: Upload results
         uses: actions/upload-artifact@v4
         with:
