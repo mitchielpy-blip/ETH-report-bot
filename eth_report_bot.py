@@ -44,6 +44,7 @@ SHORT_SCORE_MAX = float(os.environ.get("SHORT_SCORE_MAX", 38))  # score <= this 
 ATR_SL_MULT = float(os.environ.get("ATR_SL_MULT", 1.5))         # stop distance = ATR * this
 MIN_RR = float(os.environ.get("MIN_RR", 1.5))                    # minimum reward:risk to publish a plan
 PULLBACK_ATR_MULT = float(os.environ.get("PULLBACK_ATR_MULT", 1.0))  # how deep a pullback entry to seek, in ATRs
+ADX_MIN = float(os.environ.get("ADX_MIN", 20))                        # skip trades when trend strength is below this
 
 
 def fetch_candles(inst_id=INST_ID, bar=BAR, limit=LOOKBACK):
@@ -133,6 +134,59 @@ def atr(candles, period=14):
     return sum(trs[-period:]) / period
 
 
+def adx(candles, period=14):
+    """
+    Average Directional Index (Wilder's method) — measures trend strength,
+    not direction. Low ADX = flat/choppy market where pullback strategies
+    tend to underperform; high ADX = a real trend is in place.
+    Returns None if there isn't enough data yet.
+    """
+    if len(candles) < period * 2:
+        return None
+
+    plus_dm, minus_dm, trs = [], [], []
+    for i in range(1, len(candles)):
+        up_move = candles[i]["high"] - candles[i - 1]["high"]
+        down_move = candles[i - 1]["low"] - candles[i]["low"]
+        plus_dm.append(up_move if (up_move > down_move and up_move > 0) else 0.0)
+        minus_dm.append(down_move if (down_move > up_move and down_move > 0) else 0.0)
+        tr = max(
+            candles[i]["high"] - candles[i]["low"],
+            abs(candles[i]["high"] - candles[i - 1]["close"]),
+            abs(candles[i]["low"] - candles[i - 1]["close"]),
+        )
+        trs.append(tr)
+
+    def wilder_smooth(values, period):
+        smoothed = [sum(values[:period])]
+        for v in values[period:]:
+            smoothed.append(smoothed[-1] - (smoothed[-1] / period) + v)
+        return smoothed
+
+    smoothed_tr = wilder_smooth(trs, period)
+    smoothed_plus_dm = wilder_smooth(plus_dm, period)
+    smoothed_minus_dm = wilder_smooth(minus_dm, period)
+
+    dx_values = []
+    for tr_s, pdm_s, mdm_s in zip(smoothed_tr, smoothed_plus_dm, smoothed_minus_dm):
+        if tr_s == 0:
+            continue
+        plus_di = 100 * pdm_s / tr_s
+        minus_di = 100 * mdm_s / tr_s
+        di_sum = plus_di + minus_di
+        dx = 100 * abs(plus_di - minus_di) / di_sum if di_sum != 0 else 0
+        dx_values.append(dx)
+
+    if len(dx_values) < period:
+        return None
+
+    adx_smoothed = sum(dx_values[:period]) / period
+    for dx in dx_values[period:]:
+        adx_smoothed = (adx_smoothed * (period - 1) + dx) / period
+
+    return adx_smoothed
+
+
 def _cluster_levels(values, price, n_levels, tolerance_pct=0.003):
     """Merge nearby price levels (within tolerance_pct of price) into one."""
     values = sorted(values)
@@ -179,7 +233,7 @@ def higher_timeframe_trend(bar=HTF_BAR):
     return "bullish" if e20 > e50 else "bearish"
 
 
-def suggest_trade_plan(price, score, atr_value, supports, resistances, htf_trend=None):
+def suggest_trade_plan(price, score, atr_value, supports, resistances, htf_trend=None, adx_value=None):
     """
     Rule-based entry/SL/TP suggestion. Returns a dict, or None if no setup
     clears the minimum reward:risk bar (mirrors "RR不合格，不開倉" logic).
@@ -189,6 +243,9 @@ def suggest_trade_plan(price, score, atr_value, supports, resistances, htf_trend
     (short) rather than chasing the current price. Stop-loss is ATR-based;
     take-profit targets the next level in that direction.
     """
+    if adx_value is not None and adx_value < ADX_MIN:
+        return {"direction": None, "reason": f"ADX {adx_value:.1f} is below {ADX_MIN} — market looks flat/choppy, sitting out."}
+
     if score >= LONG_SCORE_MIN:
         direction = "long"
     elif score <= SHORT_SCORE_MAX:
@@ -262,8 +319,9 @@ def build_report(candles):
     nearest_support = max([s for s in supports if s < price], default=supports[0] if supports else None)
     nearest_resistance = min([res for res in resistances if res > price], default=resistances[0] if resistances else None)
     atr_value = atr(candles)
+    adx_value = adx(candles)
     htf_trend = higher_timeframe_trend()
-    plan = suggest_trade_plan(price, score, atr_value, supports, resistances, htf_trend)
+    plan = suggest_trade_plan(price, score, atr_value, supports, resistances, htf_trend, adx_value)
 
     lines = []
     lines.append(f"**ETH Hourly Report · {datetime.now(SGT).strftime('%Y-%m-%d %H:%M')} SGT**")
@@ -271,6 +329,8 @@ def build_report(candles):
     lines.append(f"Trend ({BAR}): {trend}, {momentum}")
     if htf_trend:
         lines.append(f"Higher-TF trend ({HTF_BAR}): {htf_trend}")
+    if adx_value is not None:
+        lines.append(f"ADX(14): {adx_value:.1f} ({'trending' if adx_value >= ADX_MIN else 'flat/choppy'})")
     lines.append(f"RSI(14): {r:.1f}" if r else "RSI: insufficient data")
     lines.append(f"MACD histogram: {hist:+.2f}")
     lines.append(f"Bias score: {score}/100 (a rough heuristic, not a win rate)")
