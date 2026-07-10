@@ -40,13 +40,17 @@ WARMUP_CANDLES = 260      # candles needed before the first signal can be evalua
 RISK_PER_TRADE_PCT = 1.0  # for the equity curve simulation only
 
 
-def fetch_historical_candles(inst_id, bar, target_count):
+def fetch_historical_candles(inst_id, bar, target_count, end_ts=None):
     """
     Paginate OKX's history-candles endpoint backward in time until we have
     target_count candles or run out of history. Returns oldest -> newest.
+
+    end_ts: optional millisecond timestamp to start counting back from
+    (instead of "now"). Use this to pull an earlier, out-of-sample window
+    that wasn't used when tuning the strategy.
     """
     all_rows = []
-    after = None  # ts cursor; None = start from most recent
+    after = str(end_ts) if end_ts else None  # ts cursor; None = start from most recent
 
     while len(all_rows) < target_count:
         params = {"instId": inst_id, "bar": bar, "limit": str(PAGE_LIMIT)}
@@ -337,13 +341,21 @@ def main():
     parser.add_argument("--inst", default=bot.INST_ID)
     parser.add_argument("--bar", default=bot.BAR)
     parser.add_argument("--months", type=float, default=6.0)
+    parser.add_argument("--end-date", default=None,
+                         help="Pull data ending at this date instead of now, e.g. 2024-06-01. "
+                              "Use this to test an earlier out-of-sample period.")
     args = parser.parse_args()
 
     bars_per_month = {"1H": 24 * 30, "15m": 24 * 4 * 30, "4H": 6 * 30}
     target_count = int(bars_per_month.get(args.bar, 24 * 30) * args.months) + WARMUP_CANDLES
 
-    print(f"Fetching ~{target_count} {args.bar} candles for {args.inst} ...")
-    candles = fetch_historical_candles(args.inst, args.bar, target_count)
+    end_ts = None
+    if args.end_date:
+        end_dt = datetime.strptime(args.end_date, "%Y-%m-%d").replace(tzinfo=timezone.utc)
+        end_ts = int(end_dt.timestamp() * 1000)
+
+    print(f"Fetching ~{target_count} {args.bar} candles for {args.inst}" + (f" ending {args.end_date}" if args.end_date else "") + " ...")
+    candles = fetch_historical_candles(args.inst, args.bar, target_count, end_ts)
     print(f"Got {len(candles)} candles. Running backtest ...")
 
     trades, no_fill_count, invalidated_count = run_backtest(candles)
