@@ -1,0 +1,29 @@
+name: ETH Fill Checker
+
+on:
+  schedule:
+    - cron: "3,18,33,48 * * * *"   # every 15 min, offset from :00/:15/:30/:45 to dodge congestion
+  workflow_dispatch: {}
+
+permissions:
+  contents: write   # needed so the workflow can commit state.json back
+
+jobs:
+  check-fill:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: pip install -r requirements.txt
+      - run: python fill_checker.py
+        env:
+          DISCORD_WEBHOOK_URL: ${{ secrets.DISCORD_WEBHOOK_URL }}
+      - name: Save signal state
+        run: |
+          git config user.name "eth-report-bot"
+          git config user.email "actions@github.com"
+          git add state.json
+          git diff --staged --quiet || git commit -m "Update fill-check state [skip ci]"
+          git push
