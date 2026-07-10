@@ -157,6 +157,13 @@ def simulate_trade(candles, signal_index, plan):
     if fill_index is None:
         return "no_fill", 0.0, None
 
+    # Re-check the thesis at fill time. A pullback entry can take a while
+    # to actually get touched — if the setup has flipped by then, the
+    # original plan is stale and shouldn't be blindly executed.
+    fresh_plan = evaluate_signal_at(candles, fill_index)
+    if not fresh_plan or fresh_plan["direction"] != direction:
+        return "invalidated", 0.0, None
+
     for j in range(fill_index, min(fill_index + MAX_HOLD_CANDLES, len(candles))):
         c = candles[j]
         if direction == "long":
@@ -184,6 +191,7 @@ def simulate_trade(candles, signal_index, plan):
 def run_backtest(candles):
     trades = []
     no_fill_count = 0
+    invalidated_count = 0
     busy_until = -1  # don't take overlapping trades — one position at a time
 
     for i in range(WARMUP_CANDLES, len(candles) - 1):
@@ -196,7 +204,10 @@ def run_backtest(candles):
         outcome, r_multiple, exit_ts = simulate_trade(candles, i, plan)
         if outcome == "no_fill":
             no_fill_count += 1
-            continue  # no position opened, no need to block future signals
+            continue
+        if outcome == "invalidated":
+            invalidated_count += 1
+            continue
 
         trades.append({
             "entry_ts": candles[i]["ts"],
@@ -213,14 +224,14 @@ def run_backtest(candles):
         exit_index = next((k for k in range(i + 1, len(candles)) if candles[k]["ts"] == exit_ts), i + ENTRY_WAIT_CANDLES + MAX_HOLD_CANDLES)
         busy_until = exit_index
 
-    return trades, no_fill_count
+    return trades, no_fill_count, invalidated_count
 
 
-def summarize(trades, no_fill_count=0):
-    total_signals = len(trades) + no_fill_count
+def summarize(trades, no_fill_count=0, invalidated_count=0):
+    total_signals = len(trades) + no_fill_count + invalidated_count
     if total_signals:
         fill_rate = len(trades) / total_signals * 100
-        print(f"Signals generated: {total_signals}  (filled: {len(trades)}, never reached entry: {no_fill_count}, fill rate: {fill_rate:.0f}%)")
+        print(f"Signals generated: {total_signals}  (filled & valid: {len(trades)}, never reached entry: {no_fill_count}, invalidated before fill: {invalidated_count}, fill rate: {fill_rate:.0f}%)")
 
     if not trades:
         print("No filled trades in this window — try a longer period, a wider ENTRY_WAIT_CANDLES, or looser thresholds.")
@@ -304,8 +315,8 @@ def main():
     candles = fetch_historical_candles(args.inst, args.bar, target_count)
     print(f"Got {len(candles)} candles. Running backtest ...")
 
-    trades, no_fill_count = run_backtest(candles)
-    equity = summarize(trades, no_fill_count)
+    trades, no_fill_count, invalidated_count = run_backtest(candles)
+    equity = summarize(trades, no_fill_count, invalidated_count)
     save_csv(trades)
     save_equity_chart(equity)
 
