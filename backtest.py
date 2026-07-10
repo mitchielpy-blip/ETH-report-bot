@@ -111,6 +111,7 @@ def evaluate_signal_at(candles, i):
     ema50 = bot.ema(closes, 50)[-1]
     supports, resistances = bot.support_resistance(window)
     atr_value = bot.atr(window)
+    adx_value = bot.adx(window)
 
     score = 50
     if r is not None:
@@ -127,7 +128,7 @@ def evaluate_signal_at(candles, i):
         e50 = bot.ema(htf_closes, min(50, len(htf_closes)))[-1]
         htf_trend = "bullish" if e20 > e50 else "bearish"
 
-    plan = bot.suggest_trade_plan(price, score, atr_value, supports, resistances, htf_trend)
+    plan = bot.suggest_trade_plan(price, score, atr_value, supports, resistances, htf_trend, adx_value)
     return plan
 
 
