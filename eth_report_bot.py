@@ -30,6 +30,13 @@ BAR = os.environ.get("BAR", "1H")                       # candle size
 LOOKBACK = 200                                            # candles to pull
 WEBHOOK_URL = os.environ.get("DISCORD_WEBHOOK_URL")
 
+# Trade-plan heuristics (all tunable). None of this is validated against
+# real performance — treat as a starting template for your own rules.
+LONG_SCORE_MIN = float(os.environ.get("LONG_SCORE_MIN", 62))   # score >= this -> consider long
+SHORT_SCORE_MAX = float(os.environ.get("SHORT_SCORE_MAX", 38))  # score <= this -> consider short
+ATR_SL_MULT = float(os.environ.get("ATR_SL_MULT", 1.5))         # stop distance = ATR * this
+MIN_RR = float(os.environ.get("MIN_RR", 1.5))                    # minimum reward:risk to publish a plan
+
 
 def fetch_candles(inst_id=INST_ID, bar=BAR, limit=LOOKBACK):
     """OKX returns newest-first: [ts,o,h,l,c,vol,volCcy,volCcyQuote,confirm]"""
@@ -92,6 +99,18 @@ def macd(closes, fast=12, slow=26, signal=9):
     return macd_line[-1], signal_line[-1], hist
 
 
+def atr(candles, period=14):
+    """Average True Range — used to size stop-loss distance to current volatility."""
+    trs = []
+    for i in range(1, len(candles)):
+        h, l, prev_c = candles[i]["high"], candles[i]["low"], candles[i - 1]["close"]
+        tr = max(h - l, abs(h - prev_c), abs(l - prev_c))
+        trs.append(tr)
+    if len(trs) < period:
+        return sum(trs) / len(trs) if trs else 0.0
+    return sum(trs[-period:]) / period
+
+
 def _cluster_levels(values, price, n_levels, tolerance_pct=0.003):
     """Merge nearby price levels (within tolerance_pct of price) into one."""
     values = sorted(values)
@@ -123,6 +142,57 @@ def support_resistance(candles, lookback=40, n_levels=3):
     return supports, resistances
 
 
+def suggest_trade_plan(price, score, atr_value, supports, resistances):
+    """
+    Rule-based entry/SL/TP suggestion. Returns a dict, or None if no setup
+    clears the minimum reward:risk bar (mirrors "RR不合格，不開倉" logic).
+
+    Direction is only proposed when the bias score is clearly one-sided.
+    Entry favors a pullback toward the nearest support (long) / resistance
+    (short) rather than chasing the current price. Stop-loss is ATR-based;
+    take-profit targets the next level in that direction.
+    """
+    if score >= LONG_SCORE_MIN:
+        direction = "long"
+    elif score <= SHORT_SCORE_MAX:
+        direction = "short"
+    else:
+        return {"direction": None, "reason": "Signal isn't clear enough (score is in the neutral zone) — sitting out this hour."}
+
+    if direction == "long":
+        nearest_support = max([s for s in supports if s < price], default=None)
+        nearest_resistance = min([r for r in resistances if r > price], default=None)
+        # Prefer entering on a pullback to support; fall back to current price
+        entry = nearest_support if nearest_support else price
+        stop = entry - atr_value * ATR_SL_MULT
+        target = nearest_resistance if nearest_resistance else entry + atr_value * ATR_SL_MULT * MIN_RR
+        risk = entry - stop
+        reward = target - entry
+    else:  # short
+        nearest_resistance = min([r for r in resistances if r > price], default=None)
+        nearest_support = max([s for s in supports if s < price], default=None)
+        entry = nearest_resistance if nearest_resistance else price
+        stop = entry + atr_value * ATR_SL_MULT
+        target = nearest_support if nearest_support else entry - atr_value * ATR_SL_MULT * MIN_RR
+        risk = stop - entry
+        reward = entry - target
+
+    if risk <= 0 or reward <= 0:
+        return {"direction": None, "reason": "Couldn't compute a sane risk:reward — sitting out this hour."}
+
+    rr = reward / risk
+    if rr < MIN_RR:
+        return {"direction": None, "reason": f"Risk:reward is {rr:.2f}, below the {MIN_RR} threshold — sitting out this hour."}
+
+    return {
+        "direction": direction,
+        "entry": entry,
+        "stop": stop,
+        "target": target,
+        "rr": rr,
+    }
+
+
 def build_report(candles):
     closes = [c["close"] for c in candles]
     price = closes[-1]
@@ -132,8 +202,8 @@ def build_report(candles):
     ema50 = ema(closes, 50)[-1] if len(closes) >= 50 else ema(closes, len(closes))[-1]
     supports, resistances = support_resistance(candles)
 
-    trend = "多頭排列" if ema20 > ema50 else "空頭排列"
-    momentum = "動能偏強" if hist > 0 else "動能偏弱"
+    trend = "bullish structure" if ema20 > ema50 else "bearish structure"
+    momentum = "momentum firming up" if hist > 0 else "momentum fading"
 
     # Simple heuristic bias score (0-100), NOT a validated win-rate model
     score = 50
@@ -145,21 +215,36 @@ def build_report(candles):
 
     nearest_support = max([s for s in supports if s < price], default=supports[0] if supports else None)
     nearest_resistance = min([res for res in resistances if res > price], default=resistances[0] if resistances else None)
+    atr_value = atr(candles)
+    plan = suggest_trade_plan(price, score, atr_value, supports, resistances)
 
     lines = []
-    lines.append(f"**ETH 小時報 · {datetime.now(timezone.utc).strftime('%Y-%m-%d %H:%M UTC')}**")
-    lines.append(f"價格：${price:,.2f}")
-    lines.append(f"趨勢：{trend}，{momentum}")
-    lines.append(f"RSI(14)：{r:.1f}" if r else "RSI：資料不足")
-    lines.append(f"MACD 柱：{hist:+.2f}")
-    lines.append(f"偏多評分：{score}/100（僅供參考，非勝率）")
+    lines.append(f"**ETH Hourly Report · {datetime.now(timezone.utc).strftime('%Y-%m-%d %H:%M UTC')}**")
+    lines.append(f"Price: ${price:,.2f}")
+    lines.append(f"Trend: {trend}, {momentum}")
+    lines.append(f"RSI(14): {r:.1f}" if r else "RSI: insufficient data")
+    lines.append(f"MACD histogram: {hist:+.2f}")
+    lines.append(f"Bias score: {score}/100 (a rough heuristic, not a win rate)")
     if supports:
-        lines.append(f"關鍵支撐：{', '.join(f'{s:,.0f}' for s in supports)}")
+        lines.append(f"Key support: {', '.join(f'{s:,.0f}' for s in supports)}")
     if resistances:
-        lines.append(f"關鍵阻力：{', '.join(f'{rr:,.0f}' for rr in resistances)}")
+        lines.append(f"Key resistance: {', '.join(f'{rr:,.0f}' for rr in resistances)}")
     if nearest_support and nearest_resistance:
-        lines.append(f"最近區間：{nearest_support:,.0f} - {nearest_resistance:,.0f}")
-    lines.append("\n_僅為技術指標自動彙整，不構成投資建議，請自行判斷風險。_")
+        lines.append(f"Nearest range: {nearest_support:,.0f} - {nearest_resistance:,.0f}")
+
+    lines.append("")
+    if plan["direction"]:
+        dir_label = "LONG" if plan["direction"] == "long" else "SHORT"
+        lines.append(f"**Suggested direction: {dir_label}**")
+        lines.append(f"Suggested entry: ${plan['entry']:,.2f}")
+        lines.append(f"Stop-loss: ${plan['stop']:,.2f}")
+        lines.append(f"Take-profit: ${plan['target']:,.2f}")
+        lines.append(f"Risk:Reward: about 1:{plan['rr']:.2f}")
+    else:
+        lines.append(f"**Suggested direction: No entry**")
+        lines.append(plan["reason"])
+
+    lines.append("\n_Auto-generated from technical indicators only — not a win rate, not investment advice. Entry levels are rule-based estimates. Confirm risk and position size yourself before placing any order._")
     return "\n".join(lines)
 
 
