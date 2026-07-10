@@ -5,6 +5,9 @@ on:
     - cron: "0 * * * *"   # every hour, on the hour (UTC)
   workflow_dispatch: {}     # lets you also trigger it manually from GitHub
 
+permissions:
+  contents: write   # needed so the workflow can commit state.json back
+
 jobs:
   post-report:
     runs-on: ubuntu-latest
@@ -17,3 +20,10 @@ jobs:
       - run: python eth_report_bot.py
         env:
           DISCORD_WEBHOOK_URL: ${{ secrets.DISCORD_WEBHOOK_URL }}
+      - name: Save signal state
+        run: |
+          git config user.name "eth-report-bot"
+          git config user.email "actions@github.com"
+          git add state.json
+          git diff --staged --quiet || git commit -m "Update signal state [skip ci]"
+          git push
