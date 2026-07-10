@@ -39,6 +39,12 @@ ENTRY_WAIT_CANDLES = 24   # give a pending pullback order up to 24 bars to actua
 WARMUP_CANDLES = 260      # candles needed before the first signal can be evaluated
 RISK_PER_TRADE_PCT = 1.0  # for the equity curve simulation only
 
+# Trading cost assumptions — these are approximate OKX USDT-margined perp
+# rates for a regular (non-VIP) account. Check your actual fee tier under
+# Account -> Fees on OKX and adjust if different.
+ENTRY_FEE_PCT = 0.02   # pullback entry is a resting limit order -> maker fee
+EXIT_FEE_PCT = 0.05    # stop-loss/take-profit triggers execute as market -> taker fee
+
 
 def fetch_historical_candles(inst_id, bar, target_count, end_ts=None):
     """
@@ -83,6 +89,66 @@ def fetch_historical_candles(inst_id, bar, target_count, end_ts=None):
         for row in all_rows[-target_count:]
     ]
     return candles
+
+
+def fetch_funding_history(inst_id, start_ts, end_ts):
+    """
+    Fetch real historical funding rate events for inst_id between
+    start_ts and end_ts (ms). Perpetual swaps pay/receive funding on a
+    schedule (commonly every 8h, though OKX has moved toward variable
+    intervals) — this pulls the actual realized rates so the backtest
+    can charge/credit them instead of guessing.
+    """
+    events = []
+    after = None
+    while True:
+        params = {"instId": inst_id, "limit": "100"}
+        if after:
+            params["after"] = after
+        resp = requests.get(f"{OKX_BASE}/api/v5/public/funding-rate-history", params=params, timeout=15)
+        resp.raise_for_status()
+        data = resp.json()
+        if data.get("code") != "0":
+            raise RuntimeError(f"OKX funding-rate error: {data}")
+        rows = data["data"]
+        if not rows:
+            break
+        events.extend(rows)
+        oldest_ts = int(rows[-1]["fundingTime"])
+        after = rows[-1]["fundingTime"]
+        time.sleep(0.15)
+        if oldest_ts <= start_ts:
+            break
+
+    out = [
+        {"ts": int(r["fundingTime"]), "rate": float(r["fundingRate"])}
+        for r in events
+        if start_ts <= int(r["fundingTime"]) <= end_ts
+    ]
+    out.sort(key=lambda x: x["ts"])
+    return out
+
+
+def compute_trade_costs(direction, entry, risk, fill_ts, exit_ts, funding_events):
+    """
+    Returns (fee_r, funding_r) — both already converted to R-multiples so
+    they can be subtracted/added directly to a trade's raw r_multiple.
+    Positive funding_r means the trade received funding; negative means
+    it paid. fee_r is always a cost (positive number to subtract).
+    """
+    fee_price = entry * (ENTRY_FEE_PCT + EXIT_FEE_PCT) / 100
+    fee_r = fee_price / risk if risk else 0.0
+
+    funding_r = 0.0
+    for ev in funding_events:
+        if fill_ts < ev["ts"] <= exit_ts:
+            cost_price = entry * ev["rate"]  # positive rate: longs pay shorts
+            if direction == "long":
+                funding_r -= cost_price / risk
+            else:
+                funding_r += cost_price / risk
+
+    return fee_r, funding_r
 
 
 def resample_htf(candles_1h, group=4):
@@ -136,7 +202,7 @@ def evaluate_signal_at(candles, i):
     return plan
 
 
-def simulate_trade(candles, signal_index, plan):
+def simulate_trade(candles, signal_index, plan, funding_events=None):
     """
     Entry is a pullback level, not the current price, so it's treated as a
     pending limit order: we first wait for price to actually reach entry
@@ -144,7 +210,11 @@ def simulate_trade(candles, signal_index, plan):
     If it never fills, the signal is discarded — not counted as a trade.
     Once filled, walk forward until stop or target is hit, or
     MAX_HOLD_CANDLES elapses (timeout, marked-to-market at last close).
+
+    Returns (outcome, net_r_multiple, exit_ts, cost_breakdown) where
+    cost_breakdown = {"gross_r", "fee_r", "funding_r"}.
     """
+    funding_events = funding_events or []
     direction = plan["direction"]
     entry, stop, target = plan["entry"], plan["stop"], plan["target"]
     risk = abs(entry - stop)
@@ -160,14 +230,21 @@ def simulate_trade(candles, signal_index, plan):
             break
 
     if fill_index is None:
-        return "no_fill", 0.0, None
+        return "no_fill", 0.0, None, None
 
     # Re-check the thesis at fill time. A pullback entry can take a while
     # to actually get touched — if the setup has flipped by then, the
     # original plan is stale and shouldn't be blindly executed.
     fresh_plan = evaluate_signal_at(candles, fill_index)
     if not fresh_plan or fresh_plan["direction"] != direction:
-        return "invalidated", 0.0, None
+        return "invalidated", 0.0, None, None
+
+    fill_ts = candles[fill_index]["ts"]
+
+    def finalize(outcome, gross_r, exit_ts):
+        fee_r, funding_r = compute_trade_costs(direction, entry, risk, fill_ts, exit_ts, funding_events)
+        net_r = gross_r - fee_r + funding_r
+        return outcome, net_r, exit_ts, {"gross_r": gross_r, "fee_r": fee_r, "funding_r": funding_r}
 
     for j in range(fill_index, min(fill_index + MAX_HOLD_CANDLES, len(candles))):
         c = candles[j]
@@ -181,19 +258,19 @@ def simulate_trade(candles, signal_index, plan):
         # If both could have been touched in the same candle, assume the
         # worse outcome (stop) hits first — conservative assumption.
         if hit_stop:
-            return "loss", -1.0, candles[j]["ts"]
+            return finalize("loss", -1.0, candles[j]["ts"])
         if hit_target:
             r_multiple = (target - entry) / risk if direction == "long" else (entry - target) / risk
-            return "win", r_multiple, candles[j]["ts"]
+            return finalize("win", r_multiple, candles[j]["ts"])
 
     # Timed out — mark to market
     last_index = min(fill_index + MAX_HOLD_CANDLES, len(candles) - 1)
     last_close = candles[last_index]["close"]
     r_multiple = (last_close - entry) / risk if direction == "long" else (entry - last_close) / risk
-    return "timeout", r_multiple, candles[last_index]["ts"]
+    return finalize("timeout", r_multiple, candles[last_index]["ts"])
 
 
-def run_backtest(candles):
+def run_backtest(candles, funding_events=None):
     trades = []
     no_fill_count = 0
     invalidated_count = 0
@@ -206,7 +283,7 @@ def run_backtest(candles):
         if not plan or not plan["direction"]:
             continue
 
-        outcome, r_multiple, exit_ts = simulate_trade(candles, i, plan)
+        outcome, r_multiple, exit_ts, costs = simulate_trade(candles, i, plan, funding_events)
         if outcome == "no_fill":
             no_fill_count += 1
             continue
@@ -222,7 +299,10 @@ def run_backtest(candles):
             "target": plan["target"],
             "rr_planned": plan["rr"],
             "outcome": outcome,
-            "r_multiple": r_multiple,
+            "gross_r": costs["gross_r"],
+            "fee_r": costs["fee_r"],
+            "funding_r": costs["funding_r"],
+            "r_multiple": r_multiple,  # net of fees and funding
             "exit_ts": exit_ts,
         })
         # find index of exit_ts to know when we're free to trade again
@@ -249,6 +329,9 @@ def summarize(trades, no_fill_count=0, invalidated_count=0):
 
     win_rate = len(wins) / len(decided) * 100 if decided else 0.0
     avg_r = sum(t["r_multiple"] for t in trades) / len(trades)
+    avg_gross_r = sum(t["gross_r"] for t in trades) / len(trades)
+    avg_fee_r = sum(t["fee_r"] for t in trades) / len(trades)
+    avg_funding_r = sum(t["funding_r"] for t in trades) / len(trades)
     expectancy = avg_r  # already in R-multiples, 1R = planned risk per trade
 
     # Equity curve assuming fixed % risk per trade
@@ -266,8 +349,11 @@ def summarize(trades, no_fill_count=0, invalidated_count=0):
     print(f"Total signals traded: {len(trades)}")
     print(f"  Wins: {len(wins)}   Losses: {len(losses)}   Timeouts: {len(timeouts)}")
     print(f"Win rate (excl. timeouts): {win_rate:.1f}%")
-    print(f"Average R-multiple per trade: {avg_r:+.2f}R")
-    print(f"Expectancy: {expectancy:+.2f}R per trade")
+    print(f"Average gross R-multiple (before costs): {avg_gross_r:+.2f}R")
+    print(f"  minus avg fee cost: {avg_fee_r:.2f}R")
+    print(f"  {'plus' if avg_funding_r >= 0 else 'minus'} avg funding: {avg_funding_r:+.2f}R")
+    print(f"Average NET R-multiple per trade (after fees + funding): {avg_r:+.2f}R")
+    print(f"Expectancy (net): {expectancy:+.2f}R per trade")
     print(f"Simulated equity (start 100, risking {RISK_PER_TRADE_PCT}%/trade): {equity[-1]:.1f}")
     print(f"Max drawdown: {max_dd:.1f}%")
 
@@ -356,9 +442,13 @@ def main():
 
     print(f"Fetching ~{target_count} {args.bar} candles for {args.inst}" + (f" ending {args.end_date}" if args.end_date else "") + " ...")
     candles = fetch_historical_candles(args.inst, args.bar, target_count, end_ts)
-    print(f"Got {len(candles)} candles. Running backtest ...")
+    print(f"Got {len(candles)} candles.")
 
-    trades, no_fill_count, invalidated_count = run_backtest(candles)
+    print("Fetching real historical funding rates ...")
+    funding_events = fetch_funding_history(args.inst, candles[0]["ts"], candles[-1]["ts"])
+    print(f"Got {len(funding_events)} funding events. Running backtest ...")
+
+    trades, no_fill_count, invalidated_count = run_backtest(candles, funding_events)
     equity = summarize(trades, no_fill_count, invalidated_count)
     print_split_comparison(trades)
     save_csv(trades)
