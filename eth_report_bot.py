@@ -43,6 +43,7 @@ LONG_SCORE_MIN = float(os.environ.get("LONG_SCORE_MIN", 62))   # score >= this -
 SHORT_SCORE_MAX = float(os.environ.get("SHORT_SCORE_MAX", 38))  # score <= this -> consider short
 ATR_SL_MULT = float(os.environ.get("ATR_SL_MULT", 1.5))         # stop distance = ATR * this
 MIN_RR = float(os.environ.get("MIN_RR", 1.5))                    # minimum reward:risk to publish a plan
+PULLBACK_ATR_MULT = float(os.environ.get("PULLBACK_ATR_MULT", 1.0))  # how deep a pullback entry to seek, in ATRs
 
 
 def fetch_candles(inst_id=INST_ID, bar=BAR, limit=LOOKBACK):
@@ -203,8 +204,11 @@ def suggest_trade_plan(price, score, atr_value, supports, resistances, htf_trend
     if direction == "long":
         nearest_support = max([s for s in supports if s < price], default=None)
         nearest_resistance = min([r for r in resistances if r > price], default=None)
-        # Prefer entering on a pullback to support; fall back to current price
-        entry = nearest_support if nearest_support else price
+        # Seek a shallow, volatility-scaled pullback rather than jumping
+        # straight to a potentially-distant structural support — a closer
+        # entry fills faster and is less likely to be stale by fill time.
+        atr_pullback_entry = price - atr_value * PULLBACK_ATR_MULT
+        entry = max(atr_pullback_entry, nearest_support) if nearest_support else atr_pullback_entry
         stop = entry - atr_value * ATR_SL_MULT
         target = nearest_resistance if nearest_resistance else entry + atr_value * ATR_SL_MULT * MIN_RR
         risk = entry - stop
@@ -212,7 +216,8 @@ def suggest_trade_plan(price, score, atr_value, supports, resistances, htf_trend
     else:  # short
         nearest_resistance = min([r for r in resistances if r > price], default=None)
         nearest_support = max([s for s in supports if s < price], default=None)
-        entry = nearest_resistance if nearest_resistance else price
+        atr_pullback_entry = price + atr_value * PULLBACK_ATR_MULT
+        entry = min(atr_pullback_entry, nearest_resistance) if nearest_resistance else atr_pullback_entry
         stop = entry + atr_value * ATR_SL_MULT
         target = nearest_support if nearest_support else entry - atr_value * ATR_SL_MULT * MIN_RR
         risk = stop - entry
