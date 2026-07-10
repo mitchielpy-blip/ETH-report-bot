@@ -301,6 +301,36 @@ def save_equity_chart(equity, path="equity_curve.png"):
     print(f"Saved equity chart: {path}")
 
 
+def quick_stats(trades):
+    """One-line stats for a subset of trades, used by the split comparison."""
+    if not trades:
+        return "no trades"
+    wins = [t for t in trades if t["outcome"] == "win"]
+    losses = [t for t in trades if t["outcome"] == "loss"]
+    decided = wins + losses
+    win_rate = len(wins) / len(decided) * 100 if decided else 0.0
+    avg_r = sum(t["r_multiple"] for t in trades) / len(trades)
+    return f"{len(trades)} trades, win rate {win_rate:.1f}%, avg {avg_r:+.2f}R/trade"
+
+
+def print_split_comparison(trades):
+    """
+    Compare the first half vs second half of the window chronologically.
+    If the edge is real, both halves should look broadly similar. If one
+    half carries all the profit and the other is flat/negative, the
+    aggregate number is likely inflated by a lucky period rather than a
+    consistent edge.
+    """
+    if len(trades) < 10:
+        print("\n(Too few trades to split into halves meaningfully — need more data.)")
+        return
+    mid = len(trades) // 2
+    first_half, second_half = trades[:mid], trades[mid:]
+    print("\n--- Walk-forward check: first half vs second half of the window ---")
+    print(f"First half:  {quick_stats(first_half)}")
+    print(f"Second half: {quick_stats(second_half)}")
+
+
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--inst", default=bot.INST_ID)
@@ -317,6 +347,7 @@ def main():
 
     trades, no_fill_count, invalidated_count = run_backtest(candles)
     equity = summarize(trades, no_fill_count, invalidated_count)
+    print_split_comparison(trades)
     save_csv(trades)
     save_equity_chart(equity)
 
