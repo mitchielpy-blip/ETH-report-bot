@@ -22,6 +22,7 @@ import os
 import sys
 import time
 import json
+import csv
 import requests
 from datetime import datetime, timezone, timedelta
 
@@ -34,6 +35,7 @@ HTF_BAR = os.environ.get("HTF_BAR", "4H")                # higher-timeframe filt
 LOOKBACK = 200                                            # candles to pull
 WEBHOOK_URL = os.environ.get("DISCORD_WEBHOOK_URL")
 STATE_FILE = os.environ.get("STATE_FILE", "state.json")
+SIGNALS_LOG_FILE = os.environ.get("SIGNALS_LOG_FILE", "signals_log.csv")
 MAX_RETRIES = 3
 RETRY_BACKOFF_SECONDS = 2
 
@@ -383,6 +385,31 @@ def should_post(plan, previous_state):
     return True
 
 
+def log_signal(price, plan):
+    """
+    Append every generated signal (whether it's a real trade or "no
+    entry") to a CSV log. This is what lets you later check real forward
+    performance against what the backtest predicted — the one test a
+    backtest alone can never give you.
+    """
+    row = {
+        "logged_at_ts": int(datetime.now(timezone.utc).timestamp() * 1000),
+        "price": price,
+        "direction": plan["direction"] or "",
+        "entry": plan.get("entry", ""),
+        "stop": plan.get("stop", ""),
+        "target": plan.get("target", ""),
+        "rr": plan.get("rr", ""),
+        "reason": plan.get("reason", ""),
+    }
+    file_exists = os.path.isfile(SIGNALS_LOG_FILE)
+    with open(SIGNALS_LOG_FILE, "a", newline="") as f:
+        writer = csv.DictWriter(f, fieldnames=list(row.keys()))
+        if not file_exists:
+            writer.writeheader()
+        writer.writerow(row)
+
+
 def post_to_discord(content):
     if not WEBHOOK_URL:
         print("DISCORD_WEBHOOK_URL not set — printing report instead:\n")
@@ -415,6 +442,8 @@ def main():
 
     report, plan = build_report(candles)
     previous_state = load_state()
+
+    log_signal(candles[-1]["close"], plan)
 
     if should_post(plan, previous_state):
         post_to_discord(report)
