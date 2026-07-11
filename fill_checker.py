@@ -18,7 +18,7 @@ from datetime import datetime, timezone
 
 import eth_report_bot as bot
 
-PENDING_ORDER_EXPIRY_HOURS = float(os.environ.get("PENDING_ORDER_EXPIRY_HOURS", 24))
+PENDING_ORDER_EXPIRY_HOURS = float(os.environ.get("PENDING_ORDER_EXPIRY_HOURS", 8))
 
 
 def main():
