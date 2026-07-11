@@ -1,9 +1,7 @@
 name: ETH Fill Checker
 
 on:
-  schedule:
-    - cron: "3,18,33,48 * * * *"   # every 15 min, offset from :00/:15/:30/:45 to dodge congestion
-  workflow_dispatch: {}
+  workflow_dispatch: {}   # triggered externally every 15 min by cron-job.org
 
 permissions:
   contents: write   # needed so the workflow can commit state.json back
@@ -25,5 +23,20 @@ jobs:
           git config user.name "eth-report-bot"
           git config user.email "actions@github.com"
           git add state.json
-          git diff --staged --quiet || git commit -m "Update fill-check state [skip ci]"
-          git push
+          if git diff --staged --quiet; then
+            echo "No changes to commit."
+            exit 0
+          fi
+          git commit -m "Update fill-check state [skip ci]"
+          for i in 1 2 3 4 5; do
+            git fetch origin main
+            if git rebase origin/main -X ours && git push origin main; then
+              echo "Pushed successfully."
+              exit 0
+            fi
+            echo "Push attempt $i failed (likely a race with another workflow run) — retrying..."
+            git rebase --abort 2>/dev/null || true
+            sleep $((RANDOM % 5 + 2))
+          done
+          echo "Failed to push after retries."
+          exit 1
