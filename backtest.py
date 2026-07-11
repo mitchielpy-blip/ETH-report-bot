@@ -20,6 +20,15 @@ Outputs:
     trades.csv     — every simulated trade with entry/exit/outcome
     equity_curve.png — cumulative equity assuming 1% risk per trade
     Console summary — win rate, avg RR, expectancy, max drawdown
+
+CHANGELOG (audit fixes):
+  * resample_htf now anchors 4H buckets to real 4H UTC boundaries
+    (timestamp-based) instead of grouping from the start of a growing
+    window, and drops the trailing incomplete bucket. Previously the
+    backtest's "4H" candles shifted alignment every hour and never
+    matched the actual 4H candles the live bot fetches from OKX.
+  * EMA fallback logic unified with the live bot via bot.ema_last so
+    both compute EMA20/EMA50 identically.
 """
 
 import argparse
@@ -45,6 +54,9 @@ RISK_PER_TRADE_PCT = 1.0  # for the equity curve simulation only
 # Account -> Fees on OKX and adjust if different.
 ENTRY_FEE_PCT = 0.02   # pullback entry is a resting limit order -> maker fee
 EXIT_FEE_PCT = 0.05    # stop-loss/take-profit triggers execute as market -> taker fee
+
+HTF_GROUP_HOURS = 4
+HTF_GROUP_MS = HTF_GROUP_HOURS * 3600 * 1000
 
 
 def fetch_historical_candles(inst_id, bar, target_count, end_ts=None):
@@ -152,20 +164,49 @@ def compute_trade_costs(direction, entry, risk, fill_ts, exit_ts, funding_events
     return fee_r, funding_r
 
 
-def resample_htf(candles_1h, group=4):
-    """Aggregate 1H candles into HTF candles (default 4H) using only past data."""
-    out = []
-    for i in range(0, len(candles_1h) - group + 1, group):
-        chunk = candles_1h[i:i + group]
-        out.append({
-            "ts": chunk[0]["ts"],
-            "open": chunk[0]["open"],
-            "high": max(c["high"] for c in chunk),
-            "low": min(c["low"] for c in chunk),
-            "close": chunk[-1]["close"],
-            "vol": sum(c["vol"] for c in chunk),
-        })
-    return out
+def resample_htf(candles_1h, group_ms=HTF_GROUP_MS):
+    """
+    Aggregate 1H candles into HTF candles anchored to real HTF boundaries
+    (audit fix). Each 1H candle is assigned to the bucket
+    ts - (ts % group_ms), which matches how OKX's own 4H candles are
+    aligned. The trailing bucket is dropped unless it contains a full
+    group of 1H candles, so — like the live bot after its confirmed-
+    candle fix — only *completed* HTF bars feed the trend filter.
+    Uses only past data; no lookahead.
+    """
+    if not candles_1h:
+        return []
+
+    buckets = []
+    current_key = None
+    for c in candles_1h:
+        key = c["ts"] - (c["ts"] % group_ms)
+        if key != current_key:
+            buckets.append({
+                "ts": key,
+                "open": c["open"],
+                "high": c["high"],
+                "low": c["low"],
+                "close": c["close"],
+                "vol": c["vol"],
+                "count": 1,
+            })
+            current_key = key
+        else:
+            b = buckets[-1]
+            b["high"] = max(b["high"], c["high"])
+            b["low"] = min(b["low"], c["low"])
+            b["close"] = c["close"]
+            b["vol"] += c["vol"]
+            b["count"] += 1
+
+    group = group_ms // (3600 * 1000)
+    # Drop the trailing (still-forming) bucket; keep a partial *first*
+    # bucket out too, since it also isn't a true full HTF candle.
+    complete = [b for b in buckets[:-1] if b["count"] == group]
+    if buckets and buckets[-1]["count"] == group:
+        complete.append(buckets[-1])
+    return [{k: b[k] for k in ("ts", "open", "high", "low", "close", "vol")} for b in complete]
 
 
 def evaluate_signal_at(candles, i, previous_raw_direction=None):
@@ -178,8 +219,8 @@ def evaluate_signal_at(candles, i, previous_raw_direction=None):
     price = closes[-1]
     r = bot.rsi(closes)
     _, _, hist = bot.macd(closes)
-    ema20 = bot.ema(closes, 20)[-1]
-    ema50 = bot.ema(closes, 50)[-1]
+    ema20 = bot.ema_last(closes, 20)
+    ema50 = bot.ema_last(closes, 50)
     supports, resistances = bot.support_resistance(window)
     atr_value = bot.atr(window)
     adx_value = bot.adx(window)
@@ -201,12 +242,12 @@ def evaluate_signal_at(candles, i, previous_raw_direction=None):
 
     score = max(5, min(95, round(score)))
 
-    htf_candles = resample_htf(window, group=4)
+    htf_candles = resample_htf(window)
     htf_trend = None
     if len(htf_candles) >= 20:
         htf_closes = [c["close"] for c in htf_candles]
-        e20 = bot.ema(htf_closes, 20)[-1]
-        e50 = bot.ema(htf_closes, min(50, len(htf_closes)))[-1]
+        e20 = bot.ema_last(htf_closes, 20)
+        e50 = bot.ema_last(htf_closes, 50)
         htf_trend = "bullish" if e20 > e50 else "bearish"
 
     plan = bot.suggest_trade_plan(price, score, atr_value, supports, resistances, htf_trend, adx_value, previous_raw_direction)
