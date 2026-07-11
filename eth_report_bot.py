@@ -498,6 +498,10 @@ def main():
     report, plan = build_report(candles)
     previous_state = load_state()
 
+    print("--- Generated report (always logged here, whether or not it posts) ---")
+    print(report)
+    print("--- end report ---")
+
     log_signal(candles[-1]["close"], plan)
 
     if should_post(plan, previous_state):
