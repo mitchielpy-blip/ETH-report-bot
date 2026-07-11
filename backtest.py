@@ -24,6 +24,7 @@ Outputs:
 
 import argparse
 import csv
+import os
 import time
 import sys
 from datetime import datetime, timezone
@@ -35,7 +36,7 @@ import eth_report_bot as bot
 OKX_BASE = "https://www.okx.com"
 PAGE_LIMIT = 100          # OKX history-candles max per request
 MAX_HOLD_CANDLES = 72     # give a filled trade up to 72 bars to hit SL/TP before timing out
-ENTRY_WAIT_CANDLES = 24   # give a pending pullback order up to 24 bars to actually fill
+ENTRY_WAIT_CANDLES = int(os.environ.get("ENTRY_WAIT_HOURS", 8))   # give a pending pullback order this many bars to actually fill (assumes 1H bars)
 WARMUP_CANDLES = 260      # candles needed before the first signal can be evaluated
 RISK_PER_TRADE_PCT = 1.0  # for the equity curve simulation only
 
