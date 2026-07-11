@@ -47,6 +47,8 @@ ATR_SL_MULT = float(os.environ.get("ATR_SL_MULT", 1.5))         # stop distance 
 MIN_RR = float(os.environ.get("MIN_RR", 1.5))                    # minimum reward:risk to publish a plan
 PULLBACK_ATR_MULT = float(os.environ.get("PULLBACK_ATR_MULT", 1.0))  # how deep a pullback entry to seek, in ATRs
 ADX_MIN = float(os.environ.get("ADX_MIN", 20))                        # skip trades when trend strength is below this
+VOLUME_CONFIRM_RATIO = float(os.environ.get("VOLUME_CONFIRM_RATIO", 1.2))  # above-average volume amplifies conviction
+VOLUME_LOW_RATIO = float(os.environ.get("VOLUME_LOW_RATIO", 0.7))          # below-average volume dampens conviction
 
 
 def fetch_candles(inst_id=INST_ID, bar=BAR, limit=LOOKBACK):
@@ -189,6 +191,23 @@ def adx(candles, period=14):
     return adx_smoothed
 
 
+def volume_ratio(candles, lookback=20):
+    """
+    Current candle's volume relative to the average of the preceding
+    `lookback` candles. >1 means above-average participation (a breakout
+    or continuation is more likely to be "real"); <1 means below-average
+    (more likely to be noise or a low-conviction move that fails).
+    Returns None if there isn't enough data yet.
+    """
+    if len(candles) < lookback + 1:
+        return None
+    recent = candles[-(lookback + 1):-1]  # exclude the current candle itself
+    avg_vol = sum(c["vol"] for c in recent) / len(recent)
+    if avg_vol == 0:
+        return None
+    return candles[-1]["vol"] / avg_vol
+
+
 def _cluster_levels(values, price, n_levels, tolerance_pct=0.003):
     """Merge nearby price levels (within tolerance_pct of price) into one."""
     values = sorted(values)
@@ -316,6 +335,20 @@ def build_report(candles):
         score += (r - 50) * 0.4
     score += 15 if ema20 > ema50 else -15
     score += 10 if hist > 0 else -10
+
+    # Volume confirmation: above-average participation amplifies whatever
+    # direction the other indicators already lean toward (a move backed by
+    # real volume is more likely genuine); below-average volume dampens it
+    # back toward neutral (low participation = more likely noise).
+    vol_ratio = volume_ratio(candles)
+    if vol_ratio is not None:
+        deviation = score - 50
+        if vol_ratio >= VOLUME_CONFIRM_RATIO:
+            deviation *= 1.15
+        elif vol_ratio <= VOLUME_LOW_RATIO:
+            deviation *= 0.7
+        score = 50 + deviation
+
     score = max(5, min(95, round(score)))
 
     nearest_support = max([s for s in supports if s < price], default=supports[0] if supports else None)
@@ -333,6 +366,9 @@ def build_report(candles):
         lines.append(f"Higher-TF trend ({HTF_BAR}): {htf_trend}")
     if adx_value is not None:
         lines.append(f"ADX(14): {adx_value:.1f} ({'trending' if adx_value >= ADX_MIN else 'flat/choppy'})")
+    if vol_ratio is not None:
+        vol_label = "confirming" if vol_ratio >= VOLUME_CONFIRM_RATIO else ("weak" if vol_ratio <= VOLUME_LOW_RATIO else "normal")
+        lines.append(f"Volume: {vol_ratio:.2f}x average ({vol_label})")
     lines.append(f"RSI(14): {r:.1f}" if r else "RSI: insufficient data")
     lines.append(f"MACD histogram: {hist:+.2f}")
     lines.append(f"Bias score: {score}/100 (a rough heuristic, not a win rate)")
