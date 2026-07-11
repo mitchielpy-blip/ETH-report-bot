@@ -1,7 +1,9 @@
 name: ETH Fill Checker
 
 on:
-  workflow_dispatch: {}   # triggered externally every 15 min by cron-job.org
+  schedule:
+    - cron: "3,18,33,48 * * * *"   # every 15 min, offset from :00/:15/:30/:45
+  workflow_dispatch: {}
 
 permissions:
   contents: write   # needed so the workflow can commit state.json back
