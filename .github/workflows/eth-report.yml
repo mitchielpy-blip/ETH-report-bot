@@ -1,7 +1,9 @@
 name: ETH Hourly Report
 
 on:
-  workflow_dispatch: {}     # triggered externally every hour by cron-job.org (GitHub's own schedule proved unreliable)
+  schedule:
+    - cron: "7 * * * *"   # every hour at :07
+  workflow_dispatch: {}     # also allows manual triggers from GitHub or an external service
 
 permissions:
   contents: write   # needed so the workflow can commit state.json back
