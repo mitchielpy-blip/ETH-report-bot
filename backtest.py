@@ -464,7 +464,14 @@ def main():
 
     print("Fetching real historical funding rates ...")
     funding_events = fetch_funding_history(args.inst, candles[0]["ts"], candles[-1]["ts"])
-    print(f"Got {len(funding_events)} funding events. Running backtest ...")
+    period_hours = (candles[-1]["ts"] - candles[0]["ts"]) / (3600 * 1000)
+    expected_funding_events = period_hours / 8  # funding typically settles ~every 8h
+    print(f"Got {len(funding_events)} funding events (expected roughly {expected_funding_events:.0f} for this period).")
+    if expected_funding_events > 0 and len(funding_events) < expected_funding_events * 0.5:
+        print("WARNING: funding coverage looks incomplete for this period — OKX's API often only serves a")
+        print("         limited rolling window of funding history. Results below likely UNDERSTATE real funding")
+        print("         costs for the earlier part of this window. Treat the net R-multiple with extra caution.")
+    print("Running backtest ...")
 
     trades, no_fill_count, invalidated_count = run_backtest(candles, funding_events)
     equity = summarize(trades, no_fill_count, invalidated_count)
