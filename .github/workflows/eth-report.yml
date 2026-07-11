@@ -1,9 +1,7 @@
 name: ETH Hourly Report
 
 on:
-  schedule:
-    - cron: "7 * * * *"   # every hour at :07 — avoids GitHub's top-of-hour congestion
-  workflow_dispatch: {}     # lets you also trigger it manually from GitHub
+  workflow_dispatch: {}     # triggered externally every hour by cron-job.org (GitHub's own schedule proved unreliable)
 
 permissions:
   contents: write   # needed so the workflow can commit state.json back
@@ -25,5 +23,20 @@ jobs:
           git config user.name "eth-report-bot"
           git config user.email "actions@github.com"
           git add state.json signals_log.csv
-          git diff --staged --quiet || git commit -m "Update signal state and log [skip ci]"
-          git push
+          if git diff --staged --quiet; then
+            echo "No changes to commit."
+            exit 0
+          fi
+          git commit -m "Update signal state and log [skip ci]"
+          for i in 1 2 3 4 5; do
+            git fetch origin main
+            if git rebase origin/main -X ours && git push origin main; then
+              echo "Pushed successfully."
+              exit 0
+            fi
+            echo "Push attempt $i failed (likely a race with another workflow run) — retrying..."
+            git rebase --abort 2>/dev/null || true
+            sleep $((RANDOM % 5 + 2))
+          done
+          echo "Failed to push after retries."
+          exit 1
