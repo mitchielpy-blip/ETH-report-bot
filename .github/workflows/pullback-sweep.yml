@@ -1,0 +1,49 @@
+name: Run Pullback Sweep
+
+on:
+  workflow_dispatch:
+    inputs:
+      months:
+        description: "How many months of history to test"
+        required: false
+        default: "12"
+      bar:
+        description: "Candle timeframe (1H, 15m, 4H)"
+        required: false
+        default: "1H"
+      end_date:
+        description: "Optional: end date for the window, e.g. 2024-06-01 (leave blank for most recent data)"
+        required: false
+        default: ""
+      values:
+        description: "Comma-separated PULLBACK_ATR_MULT values to test"
+        required: false
+        default: "1.0,0.7,0.5,0.3"
+      adx_min:
+        description: "Minimum ADX to allow a trade (should match your live bot's ADX_MIN unless you're deliberately testing a different value)"
+        required: false
+        default: "20"
+
+jobs:
+  sweep:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: pip install -r requirements.txt
+      - name: Run pullback sweep
+        run: |
+          ARGS="--months ${{ github.event.inputs.months }} --bar ${{ github.event.inputs.bar }} --values ${{ github.event.inputs.values }}"
+          if [ -n "${{ github.event.inputs.end_date }}" ]; then
+            ARGS="$ARGS --end-date ${{ github.event.inputs.end_date }}"
+          fi
+          python backtest_sweep.py $ARGS
+        env:
+          ADX_MIN: ${{ github.event.inputs.adx_min }}
+      - name: Upload results
+        uses: actions/upload-artifact@v4
+        with:
+          name: pullback-sweep-results
+          path: pullback_sweep.csv
