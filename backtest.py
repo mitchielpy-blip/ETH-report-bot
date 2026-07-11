@@ -188,6 +188,16 @@ def evaluate_signal_at(candles, i):
         score += (r - 50) * 0.4
     score += 15 if ema20 > ema50 else -15
     score += 10 if hist > 0 else -10
+
+    vol_ratio = bot.volume_ratio(window)
+    if vol_ratio is not None:
+        deviation = score - 50
+        if vol_ratio >= bot.VOLUME_CONFIRM_RATIO:
+            deviation *= 1.15
+        elif vol_ratio <= bot.VOLUME_LOW_RATIO:
+            deviation *= 0.7
+        score = 50 + deviation
+
     score = max(5, min(95, round(score)))
 
     htf_candles = resample_htf(window, group=4)
