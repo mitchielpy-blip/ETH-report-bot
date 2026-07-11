@@ -15,6 +15,10 @@ on:
         description: "Optional: end date for the window, e.g. 2024-06-01 (leave blank for most recent data)"
         required: false
         default: ""
+      adx_min:
+        description: "Minimum ADX to allow a trade (higher = stricter trend-strength filter)"
+        required: false
+        default: "20"
 
 jobs:
   backtest:
@@ -32,6 +36,8 @@ jobs:
             ARGS="$ARGS --end-date ${{ github.event.inputs.end_date }}"
           fi
           python backtest.py $ARGS
+        env:
+          ADX_MIN: ${{ github.event.inputs.adx_min }}
       - name: Upload results
         uses: actions/upload-artifact@v4
         with:
