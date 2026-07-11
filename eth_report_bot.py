@@ -59,7 +59,12 @@ LONG_SCORE_MIN = float(os.environ.get("LONG_SCORE_MIN", 62))   # score >= this -
 SHORT_SCORE_MAX = float(os.environ.get("SHORT_SCORE_MAX", 38))  # score <= this -> consider short
 ATR_SL_MULT = float(os.environ.get("ATR_SL_MULT", 1.5))         # stop distance = ATR * this
 MIN_RR = float(os.environ.get("MIN_RR", 1.5))                    # minimum reward:risk to publish a plan
-PULLBACK_ATR_MULT = float(os.environ.get("PULLBACK_ATR_MULT", 1.0))  # how deep a pullback entry to seek, in ATRs
+PULLBACK_ATR_MULT = float(os.environ.get("PULLBACK_ATR_MULT", 0.7))  # how deep a pullback entry to seek, in ATRs
+# Updated from 1.0 -> 0.7 on the basis of backtest_sweep.py results (12mo, 1H):
+# 0.7 raised fill rate 11.1%->20.3%, win rate 45.5%->52.2%, and net expectancy
+# 0.145R->0.314R per trade vs the old 1.0 setting, with both half-window splits
+# staying solidly positive (+0.335R / +0.293R). See pullback_sweep.csv for the
+# full comparison across 1.0/0.7/0.5/0.3 if this ever needs revisiting.
 ADX_MIN = float(os.environ.get("ADX_MIN", 20))                        # skip trades when trend strength is below this
 VOLUME_CONFIRM_RATIO = float(os.environ.get("VOLUME_CONFIRM_RATIO", 1.2))  # above-average volume amplifies conviction
 VOLUME_LOW_RATIO = float(os.environ.get("VOLUME_LOW_RATIO", 0.7))          # below-average volume dampens conviction
