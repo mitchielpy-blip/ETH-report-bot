@@ -39,7 +39,7 @@ jobs:
           if [ -n "${{ github.event.inputs.end_date }}" ]; then
             ARGS="$ARGS --end-date ${{ github.event.inputs.end_date }}"
           fi
-          python backtest_sweep.py $ARGS
+          python -u backtest_sweep.py $ARGS
         env:
           ADX_MIN: ${{ github.event.inputs.adx_min }}
       - name: Upload results
