@@ -167,7 +167,7 @@ def resample_htf(candles_1h, group=4):
     return out
 
 
-def evaluate_signal_at(candles, i):
+def evaluate_signal_at(candles, i, previous_raw_direction=None):
     """Run the exact same logic as build_report(), but using only candles[:i+1]."""
     window = candles[:i + 1]
     if len(window) < WARMUP_CANDLES:
@@ -208,7 +208,7 @@ def evaluate_signal_at(candles, i):
         e50 = bot.ema(htf_closes, min(50, len(htf_closes)))[-1]
         htf_trend = "bullish" if e20 > e50 else "bearish"
 
-    plan = bot.suggest_trade_plan(price, score, atr_value, supports, resistances, htf_trend, adx_value)
+    plan = bot.suggest_trade_plan(price, score, atr_value, supports, resistances, htf_trend, adx_value, previous_raw_direction)
     return plan
 
 
@@ -244,8 +244,12 @@ def simulate_trade(candles, signal_index, plan, funding_events=None):
 
     # Re-check the thesis at fill time. A pullback entry can take a while
     # to actually get touched — if the setup has flipped by then, the
-    # original plan is stale and shouldn't be blindly executed.
-    fresh_plan = evaluate_signal_at(candles, fill_index)
+    # original plan is stale and shouldn't be blindly executed. We pass
+    # the original direction as "previous_raw_direction" here so the
+    # persistence gate doesn't spuriously block this re-check — we only
+    # care whether the raw signal has actually flipped, not re-requiring
+    # a fresh 2-hour confirmation at fill time.
+    fresh_plan = evaluate_signal_at(candles, fill_index, previous_raw_direction=direction)
     if not fresh_plan or fresh_plan["direction"] != direction:
         return "invalidated", 0.0, None, None
 
@@ -285,11 +289,14 @@ def run_backtest(candles, funding_events=None):
     no_fill_count = 0
     invalidated_count = 0
     busy_until = -1  # don't take overlapping trades — one position at a time
+    previous_raw_direction = None  # tracked every hour, matching the live bot's persistence gate
 
     for i in range(WARMUP_CANDLES, len(candles) - 1):
+        plan = evaluate_signal_at(candles, i, previous_raw_direction)
+        previous_raw_direction = plan.get("raw_direction") if plan else None
+
         if i <= busy_until:
             continue
-        plan = evaluate_signal_at(candles, i)
         if not plan or not plan["direction"]:
             continue
 
