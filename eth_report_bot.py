@@ -16,6 +16,20 @@ Setup:
        DISCORD_WEBHOOK_URL
   3. Run manually:  python eth_report_bot.py
   4. For hourly auto-posting, see the GitHub Actions workflow included.
+
+CHANGELOG (audit fixes):
+  * fetch_candles now discards the in-progress (unconfirmed) candle that
+    OKX returns as the newest row. Previously every indicator — RSI,
+    MACD, EMA, ATR, and especially volume_ratio — was computed on a
+    candle only minutes old, which made live behavior diverge from the
+    backtest (which only ever sees completed candles). volume_ratio was
+    the worst hit: a 7-minute-old candle almost always looks "low
+    volume", permanently dampening the bias score toward neutral.
+  * Pending unfilled entries are now preserved in state.json for up to
+    PENDING_ENTRY_LIFETIME_HOURS instead of being wiped by the next
+    hourly run. This matches the backtest, which gives a pullback entry
+    ENTRY_WAIT_CANDLES bars to fill, and keeps fill_checker.py watching
+    the level for the full window.
 """
 
 import os
@@ -32,7 +46,7 @@ OKX_BASE = "https://www.okx.com"
 INST_ID = os.environ.get("INST_ID", "ETH-USDT-SWAP")   # perpetual swap
 BAR = os.environ.get("BAR", "1H")                       # candle size
 HTF_BAR = os.environ.get("HTF_BAR", "4H")                # higher-timeframe filter
-LOOKBACK = 200                                            # candles to pull
+LOOKBACK = 200                                            # completed candles to analyze
 WEBHOOK_URL = os.environ.get("DISCORD_WEBHOOK_URL")
 STATE_FILE = os.environ.get("STATE_FILE", "state.json")
 SIGNALS_LOG_FILE = os.environ.get("SIGNALS_LOG_FILE", "signals_log.csv")
@@ -50,11 +64,27 @@ ADX_MIN = float(os.environ.get("ADX_MIN", 20))                        # skip tra
 VOLUME_CONFIRM_RATIO = float(os.environ.get("VOLUME_CONFIRM_RATIO", 1.2))  # above-average volume amplifies conviction
 VOLUME_LOW_RATIO = float(os.environ.get("VOLUME_LOW_RATIO", 0.7))          # below-average volume dampens conviction
 
+# How long a pending (unfilled) pullback entry stays live before being
+# discarded. Keep this equal to the backtest's ENTRY_WAIT_CANDLES (in
+# hours, for 1H bars) and fill_checker's PENDING_ORDER_EXPIRY_HOURS so
+# all three components agree on an order's lifetime.
+PENDING_ENTRY_LIFETIME_HOURS = float(os.environ.get("PENDING_ENTRY_LIFETIME_HOURS", 8))
+
 
 def fetch_candles(inst_id=INST_ID, bar=BAR, limit=LOOKBACK):
-    """OKX returns newest-first: [ts,o,h,l,c,vol,volCcy,volCcyQuote,confirm]"""
+    """
+    Fetch completed candles from OKX, oldest -> newest.
+
+    OKX returns newest-first: [ts,o,h,l,c,vol,volCcy,volCcyQuote,confirm]
+    where confirm == "1" means the candle has closed. The newest row is
+    the current in-progress candle — we request one extra and drop any
+    unconfirmed rows so every indicator only ever sees completed bars,
+    exactly like the backtest does.
+    """
     url = f"{OKX_BASE}/api/v5/market/candles"
-    params = {"instId": inst_id, "bar": bar, "limit": str(limit)}
+    # +2 head-room: the current bar is always unconfirmed, and right at
+    # the turn of the hour there can briefly be two.
+    params = {"instId": inst_id, "bar": bar, "limit": str(min(limit + 2, 300))}
 
     last_err = None
     for attempt in range(1, MAX_RETRIES + 1):
@@ -74,8 +104,10 @@ def fetch_candles(inst_id=INST_ID, bar=BAR, limit=LOOKBACK):
     else:
         raise RuntimeError(f"fetch_candles failed after {MAX_RETRIES} attempts: {last_err}")
 
-    rows = data["data"]
+    # Keep only confirmed (closed) candles — this is the audit fix.
+    rows = [row for row in data["data"] if len(row) > 8 and row[8] == "1"]
     rows.reverse()  # oldest -> newest
+    rows = rows[-limit:]
     candles = [
         {
             "ts": int(row[0]),
@@ -96,6 +128,12 @@ def ema(values, period):
     for v in values[1:]:
         out.append(v * k + out[-1] * (1 - k))
     return out
+
+
+def ema_last(closes, period):
+    """Last EMA value, gracefully shrinking the period if data is short.
+    Shared by the live bot and the backtest so both use identical logic."""
+    return ema(closes, min(period, len(closes)))[-1]
 
 
 def rsi(closes, period=14):
@@ -193,15 +231,18 @@ def adx(candles, period=14):
 
 def volume_ratio(candles, lookback=20):
     """
-    Current candle's volume relative to the average of the preceding
-    `lookback` candles. >1 means above-average participation (a breakout
-    or continuation is more likely to be "real"); <1 means below-average
-    (more likely to be noise or a low-conviction move that fails).
-    Returns None if there isn't enough data yet.
+    Latest completed candle's volume relative to the average of the
+    preceding `lookback` candles. >1 means above-average participation
+    (a breakout or continuation is more likely to be "real"); <1 means
+    below-average (more likely to be noise or a low-conviction move that
+    fails). Returns None if there isn't enough data yet.
+
+    Note: fetch_candles now guarantees candles[-1] is a *completed* bar,
+    so this comparison is finally apples-to-apples with the backtest.
     """
     if len(candles) < lookback + 1:
         return None
-    recent = candles[-(lookback + 1):-1]  # exclude the current candle itself
+    recent = candles[-(lookback + 1):-1]  # exclude the latest candle itself
     avg_vol = sum(c["vol"] for c in recent) / len(recent)
     if avg_vol == 0:
         return None
@@ -240,7 +281,9 @@ def support_resistance(candles, lookback=40, n_levels=3):
 
 
 def higher_timeframe_trend(bar=HTF_BAR):
-    """Fetch a higher timeframe and return 'bullish' / 'bearish' via EMA20 vs EMA50."""
+    """Fetch a higher timeframe and return 'bullish' / 'bearish' via EMA20 vs EMA50.
+    fetch_candles already strips the in-progress candle, so this now uses
+    only completed HTF bars — matching the backtest's resampled HTF."""
     try:
         htf_candles = fetch_candles(bar=bar, limit=100)
     except Exception as e:
@@ -249,8 +292,8 @@ def higher_timeframe_trend(bar=HTF_BAR):
     closes = [c["close"] for c in htf_candles]
     if len(closes) < 20:
         return None
-    e20 = ema(closes, 20)[-1]
-    e50 = ema(closes, min(50, len(closes)))[-1]
+    e20 = ema_last(closes, 20)
+    e50 = ema_last(closes, 50)
     return "bullish" if e20 > e50 else "bearish"
 
 
@@ -334,8 +377,8 @@ def build_report(candles, previous_raw_direction=None):
     price = closes[-1]
     r = rsi(closes)
     macd_line, signal_line, hist = macd(closes)
-    ema20 = ema(closes, 20)[-1]
-    ema50 = ema(closes, 50)[-1] if len(closes) >= 50 else ema(closes, len(closes))[-1]
+    ema20 = ema_last(closes, 20)
+    ema50 = ema_last(closes, 50)
     supports, resistances = support_resistance(candles)
 
     trend = "bullish structure" if ema20 > ema50 else "bearish structure"
@@ -372,7 +415,7 @@ def build_report(candles, previous_raw_direction=None):
 
     lines = []
     lines.append(f"**ETH Hourly Report · {datetime.now(SGT).strftime('%Y-%m-%d %H:%M')} SGT**")
-    lines.append(f"Price: ${price:,.2f}")
+    lines.append(f"Price: ${price:,.2f} (last completed {BAR} close)")
     lines.append(f"Trend ({BAR}): {trend}, {momentum}")
     if htf_trend:
         lines.append(f"Higher-TF trend ({HTF_BAR}): {htf_trend}")
@@ -437,6 +480,23 @@ def load_state():
 def save_state(state):
     with open(STATE_FILE, "w") as f:
         json.dump(state, f)
+
+
+def pending_order_is_live(state):
+    """
+    True if state holds an unfilled pending entry that hasn't expired.
+    Lifetime mirrors the backtest's ENTRY_WAIT_CANDLES so live and
+    simulated order handling agree.
+    """
+    if not state.get("direction") or state.get("entry") is None:
+        return False
+    if state.get("filled"):
+        return False
+    generated_at_ts = state.get("generated_at_ts")
+    if not generated_at_ts:
+        return False
+    age_hours = (datetime.now(timezone.utc).timestamp() * 1000 - generated_at_ts) / (3600 * 1000)
+    return age_hours <= PENDING_ENTRY_LIFETIME_HOURS
 
 
 def should_post(plan, previous_state):
@@ -521,16 +581,30 @@ def main():
     else:
         print("No change from previous no-entry signal — skipping post to avoid noise.")
 
-    new_state = {"direction": plan["direction"], "last_raw_direction": plan.get("raw_direction")}
+    # --- State handling (audit fix) ---
+    # A new directional plan always replaces whatever was pending.
+    # A "no entry" hour no longer wipes a still-live pending order —
+    # the order keeps its ENTRY_WAIT window, exactly as the backtest
+    # simulates it, and fill_checker.py keeps watching the level.
     if plan["direction"]:
-        new_state.update({
+        new_state = {
+            "direction": plan["direction"],
+            "last_raw_direction": plan.get("raw_direction"),
             "entry": plan["entry"],
             "stop": plan["stop"],
             "target": plan["target"],
             "rr": plan["rr"],
             "generated_at_ts": int(datetime.now(timezone.utc).timestamp() * 1000),
             "filled": False,
-        })
+        }
+    elif pending_order_is_live(previous_state):
+        new_state = dict(previous_state)
+        new_state["last_raw_direction"] = plan.get("raw_direction")
+        print(f"Keeping pending {previous_state['direction']} entry at {previous_state['entry']} alive "
+              f"(within its {PENDING_ENTRY_LIFETIME_HOURS:.0f}h fill window).")
+    else:
+        new_state = {"direction": None, "last_raw_direction": plan.get("raw_direction")}
+
     save_state(new_state)
 
 
