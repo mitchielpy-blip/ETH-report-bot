@@ -254,30 +254,41 @@ def higher_timeframe_trend(bar=HTF_BAR):
     return "bullish" if e20 > e50 else "bearish"
 
 
-def suggest_trade_plan(price, score, atr_value, supports, resistances, htf_trend=None, adx_value=None):
+def suggest_trade_plan(price, score, atr_value, supports, resistances, htf_trend=None, adx_value=None, previous_raw_direction=None):
     """
     Rule-based entry/SL/TP suggestion. Returns a dict, or None if no setup
     clears the minimum reward:risk bar (mirrors "RR不合格，不開倉" logic).
 
-    Direction is only proposed when the bias score is clearly one-sided.
-    Entry favors a pullback toward the nearest support (long) / resistance
-    (short) rather than chasing the current price. Stop-loss is ATR-based;
-    take-profit targets the next level in that direction.
+    Direction is only proposed when the bias score is clearly one-sided,
+    it agrees with the same raw direction from the previous hour (a
+    persistence filter — a score that flickers to "long" for one hour
+    and disappears is more likely noise than a real setup), the ADX and
+    higher-timeframe checks pass, and the resulting reward:risk clears
+    MIN_RR. Every return includes "raw_direction" so the caller can track
+    it for next hour's persistence check, even when no trade results.
     """
-    if adx_value is not None and adx_value < ADX_MIN:
-        return {"direction": None, "reason": f"ADX {adx_value:.1f} is below {ADX_MIN} — market looks flat/choppy, sitting out."}
-
     if score >= LONG_SCORE_MIN:
-        direction = "long"
+        raw_direction = "long"
     elif score <= SHORT_SCORE_MAX:
-        direction = "short"
+        raw_direction = "short"
     else:
-        return {"direction": None, "reason": "Signal isn't clear enough (score is in the neutral zone) — sitting out this hour."}
+        raw_direction = None
+
+    if raw_direction is None:
+        return {"direction": None, "reason": "Signal isn't clear enough (score is in the neutral zone) — sitting out this hour.", "raw_direction": None}
+
+    if adx_value is not None and adx_value < ADX_MIN:
+        return {"direction": None, "reason": f"ADX {adx_value:.1f} is below {ADX_MIN} — market looks flat/choppy, sitting out.", "raw_direction": raw_direction}
+
+    if previous_raw_direction != raw_direction:
+        return {"direction": None, "reason": f"{raw_direction.capitalize()} signal just appeared this hour — waiting one more hour to confirm it's not noise.", "raw_direction": raw_direction}
+
+    direction = raw_direction
 
     if htf_trend == "bearish" and direction == "long":
-        return {"direction": None, "reason": f"{HTF_BAR} trend is bearish — skipping long to avoid fighting the higher timeframe."}
+        return {"direction": None, "reason": f"{HTF_BAR} trend is bearish — skipping long to avoid fighting the higher timeframe.", "raw_direction": raw_direction}
     if htf_trend == "bullish" and direction == "short":
-        return {"direction": None, "reason": f"{HTF_BAR} trend is bullish — skipping short to avoid fighting the higher timeframe."}
+        return {"direction": None, "reason": f"{HTF_BAR} trend is bullish — skipping short to avoid fighting the higher timeframe.", "raw_direction": raw_direction}
 
     if direction == "long":
         nearest_support = max([s for s in supports if s < price], default=None)
@@ -302,11 +313,11 @@ def suggest_trade_plan(price, score, atr_value, supports, resistances, htf_trend
         reward = entry - target
 
     if risk <= 0 or reward <= 0:
-        return {"direction": None, "reason": "Couldn't compute a sane risk:reward — sitting out this hour."}
+        return {"direction": None, "reason": "Couldn't compute a sane risk:reward — sitting out this hour.", "raw_direction": raw_direction}
 
     rr = reward / risk
     if rr < MIN_RR:
-        return {"direction": None, "reason": f"Risk:reward is {rr:.2f}, below the {MIN_RR} threshold — sitting out this hour."}
+        return {"direction": None, "reason": f"Risk:reward is {rr:.2f}, below the {MIN_RR} threshold — sitting out this hour.", "raw_direction": raw_direction}
 
     return {
         "direction": direction,
@@ -314,10 +325,11 @@ def suggest_trade_plan(price, score, atr_value, supports, resistances, htf_trend
         "stop": stop,
         "target": target,
         "rr": rr,
+        "raw_direction": raw_direction,
     }
 
 
-def build_report(candles):
+def build_report(candles, previous_raw_direction=None):
     closes = [c["close"] for c in candles]
     price = closes[-1]
     r = rsi(closes)
@@ -356,7 +368,7 @@ def build_report(candles):
     atr_value = atr(candles)
     adx_value = adx(candles)
     htf_trend = higher_timeframe_trend()
-    plan = suggest_trade_plan(price, score, atr_value, supports, resistances, htf_trend, adx_value)
+    plan = suggest_trade_plan(price, score, atr_value, supports, resistances, htf_trend, adx_value, previous_raw_direction)
 
     lines = []
     lines.append(f"**ETH Hourly Report · {datetime.now(SGT).strftime('%Y-%m-%d %H:%M')} SGT**")
@@ -495,8 +507,8 @@ def main():
         print("Not enough candle data returned.", file=sys.stderr)
         sys.exit(1)
 
-    report, plan = build_report(candles)
     previous_state = load_state()
+    report, plan = build_report(candles, previous_state.get("last_raw_direction"))
 
     print("--- Generated report (always logged here, whether or not it posts) ---")
     print(report)
@@ -509,7 +521,7 @@ def main():
     else:
         print("No change from previous no-entry signal — skipping post to avoid noise.")
 
-    new_state = {"direction": plan["direction"]}
+    new_state = {"direction": plan["direction"], "last_raw_direction": plan.get("raw_direction")}
     if plan["direction"]:
         new_state.update({
             "entry": plan["entry"],
