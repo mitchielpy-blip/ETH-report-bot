@@ -459,6 +459,43 @@ def suggest_trade_plan(price, score, atr_value, supports, resistances, htf_trend
     }
 
 
+# Sentinel so evaluate_plan can tell "caller passed no HTF trend, fetch it
+# live" apart from "caller explicitly passed htf_trend=None (trend unknown)".
+# The backtest MUST always pass an explicit value so it never hits the network.
+_HTF_UNSET = object()
+
+
+def evaluate_plan(candles, previous_raw_direction=None, htf_trend=_HTF_UNSET):
+    """
+    Derive the trade plan for a completed-candle series — the decision half of
+    build_report, without any of the report formatting.
+
+    This is the single "candles -> plan" path, shared by:
+      * build_report            — the hourly report,
+      * fill_checker            — the re-check when a pending pullback entry is
+                                  finally touched (so a setup that has decayed
+                                  by fill time is skipped live, exactly as the
+                                  backtest discards it), and
+      * backtest.evaluate_signal_at — via delegation.
+    Deriving the plan one way for the live report and another way for the fill
+    re-check or the backtest is precisely how a backtest silently stops
+    describing the bot — so there is only this one path.
+
+    htf_trend may be passed in to reuse an already-fetched higher-timeframe
+    read (build_report does this); left unset it is fetched live. The backtest
+    always passes its own resampled trend explicitly, so it never fetches.
+    """
+    price = candles[-1]["close"]
+    supports, resistances = support_resistance(candles)
+    atr_value = atr(candles)
+    adx_value = adx(candles)
+    score = compute_bias_score(candles)
+    if htf_trend is _HTF_UNSET:
+        htf_trend = higher_timeframe_trend()
+    return suggest_trade_plan(price, score, atr_value, supports, resistances,
+                              htf_trend, adx_value, previous_raw_direction)
+
+
 def build_report(candles, previous_raw_direction=None):
     closes = [c["close"] for c in candles]
     price = closes[-1]
@@ -479,10 +516,12 @@ def build_report(candles, previous_raw_direction=None):
 
     nearest_support = max([s for s in supports if s < price], default=supports[0] if supports else None)
     nearest_resistance = min([res for res in resistances if res > price], default=resistances[0] if resistances else None)
-    atr_value = atr(candles)
     adx_value = adx(candles)
+    # The plan is derived by the shared evaluate_plan (same path the fill-time
+    # re-check and the backtest use). We pass the HTF read we just fetched so
+    # it isn't fetched twice.
     htf_trend = higher_timeframe_trend()
-    plan = suggest_trade_plan(price, score, atr_value, supports, resistances, htf_trend, adx_value, previous_raw_direction)
+    plan = evaluate_plan(candles, previous_raw_direction, htf_trend=htf_trend)
 
     lines = []
     lines.append(f"**{ASSET} Hourly Report · {datetime.now(SGT).strftime('%Y-%m-%d %H:%M')} SGT**")

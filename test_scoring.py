@@ -93,6 +93,36 @@ class SharedScorerInvariant(unittest.TestCase):
             self.assertEqual(plan["raw_direction"], expected)
 
 
+class EvaluatePlanIsTheSharedPlanPath(unittest.TestCase):
+    """evaluate_plan is the single 'candles -> plan' path. The hourly report,
+    the fill-time re-check, and the backtest must all go through it, so a plan
+    can't be derived one way live and another way in the backtest."""
+
+    def test_build_report_plan_comes_from_evaluate_plan(self):
+        for trend in (0.0, 6.0, -6.0):
+            candles = make_candles(trend=trend)
+            original = bot.higher_timeframe_trend
+            bot.higher_timeframe_trend = lambda *a, **k: None  # offline + deterministic
+            try:
+                _, report_plan = bot.build_report(candles, previous_raw_direction=None)
+                direct = bot.evaluate_plan(candles, previous_raw_direction=None, htf_trend=None)
+            finally:
+                bot.higher_timeframe_trend = original
+            self.assertEqual(report_plan, direct)
+
+    def test_backtest_signal_matches_evaluate_plan(self):
+        import backtest as bt
+        for trend in (0.0, 6.0, -6.0):
+            candles = make_candles(trend=trend)
+            i = len(candles) - 1
+            # Reproduce the backtest's own HTF input, then confirm the plan it
+            # returns is exactly what the shared evaluate_plan produces.
+            htf = bot.htf_trend_from_closes(
+                [c["close"] for c in bt.resample_htf(candles[:i + 1])])
+            expected = bot.evaluate_plan(candles[:i + 1], None, htf_trend=htf)
+            self.assertEqual(bt.evaluate_signal_at(candles, i), expected)
+
+
 class HtfTrendFromCloses(unittest.TestCase):
     """The higher-timeframe trend classifier, shared by the live HTF fetch and
     the backtest's resampled HTF."""
