@@ -20,6 +20,7 @@ jobs:
       - run: python fill_checker.py
         env:
           DISCORD_WEBHOOK_URL: ${{ secrets.DISCORD_WEBHOOK_URL }}
+          OKX_PROXY: ${{ secrets.OKX_PROXY }}   # proxy OKX calls past the runner's geo-block
       - name: Save signal state
         run: |
           git config user.name "eth-report-bot"

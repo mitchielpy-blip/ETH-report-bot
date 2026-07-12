@@ -42,6 +42,7 @@ jobs:
           python -u backtest.py $ARGS
         env:
           ADX_MIN: ${{ github.event.inputs.adx_min }}
+          OKX_PROXY: ${{ secrets.OKX_PROXY }}   # proxy OKX calls past the runner's geo-block
       - name: Upload results
         uses: actions/upload-artifact@v4
         with:

@@ -42,7 +42,16 @@ from datetime import datetime, timezone, timedelta
 
 SGT = timezone(timedelta(hours=8))  # Singapore Time, UTC+8, no DST
 
-OKX_BASE = "https://www.okx.com"
+OKX_BASE = os.environ.get("OKX_BASE", "https://www.okx.com")
+# Optional proxy for OKX market-data calls ONLY (Discord posts and the git
+# push in CI stay direct). OKX geo-blocks some datacenter IPs — notably
+# GitHub-hosted Actions runners, which live on US Azure ranges — and answers
+# those requests with an HTTP 3xx redirect instead of data (the "307" symptom).
+# Point OKX_PROXY at a proxy in a region OKX serves to route just these
+# requests through it. Unset = call OKX directly (fine when your own IP is
+# allowed, e.g. local runs).
+OKX_PROXY = os.environ.get("OKX_PROXY")
+OKX_PROXIES = {"https": OKX_PROXY, "http": OKX_PROXY} if OKX_PROXY else None
 INST_ID = os.environ.get("INST_ID", "ETH-USDT-SWAP")   # perpetual swap
 ASSET = INST_ID.split("-")[0]                            # e.g. "ETH", "BTC" — used in report titles
 BAR = os.environ.get("BAR", "1H")                       # candle size
@@ -94,6 +103,30 @@ def parse_candle_row(row):
     }
 
 
+def okx_get(path, params=None, timeout=10):
+    """
+    GET a public OKX endpoint through the optional OKX_PROXY and return the
+    parsed JSON body.
+
+    Redirects are NOT followed: OKX's v5 market endpoints always answer 200
+    with JSON, so a 3xx here means the request came from an IP OKX geo-blocks
+    (classically a GitHub-hosted runner). We surface that as a clear error
+    naming OKX_PROXY, instead of silently following the redirect to an HTML
+    page and failing later with a confusing JSON-decode error.
+    """
+    r = requests.get(f"{OKX_BASE}{path}", params=params, timeout=timeout,
+                     proxies=OKX_PROXIES, allow_redirects=False)
+    if 300 <= r.status_code < 400:
+        raise RuntimeError(
+            f"OKX redirected the request ({r.status_code} -> {r.headers.get('Location')}). "
+            "This almost always means the call came from an IP OKX geo-blocks "
+            "(e.g. a GitHub-hosted Actions runner). Set the OKX_PROXY secret to a "
+            "proxy in a region OKX serves."
+        )
+    r.raise_for_status()
+    return r.json()
+
+
 def fetch_candles(inst_id=INST_ID, bar=BAR, limit=LOOKBACK):
     """
     Fetch completed candles from OKX, oldest -> newest.
@@ -104,7 +137,6 @@ def fetch_candles(inst_id=INST_ID, bar=BAR, limit=LOOKBACK):
     unconfirmed rows so every indicator only ever sees completed bars,
     exactly like the backtest does.
     """
-    url = f"{OKX_BASE}/api/v5/market/candles"
     # +2 head-room: the current bar is always unconfirmed, and right at
     # the turn of the hour there can briefly be two.
     params = {"instId": inst_id, "bar": bar, "limit": str(min(limit + 2, 300))}
@@ -112,9 +144,7 @@ def fetch_candles(inst_id=INST_ID, bar=BAR, limit=LOOKBACK):
     last_err = None
     for attempt in range(1, MAX_RETRIES + 1):
         try:
-            r = requests.get(url, params=params, timeout=10)
-            r.raise_for_status()
-            data = r.json()
+            data = okx_get("/api/v5/market/candles", params)
             if data.get("code") != "0":
                 raise RuntimeError(f"OKX error: {data}")
             break
@@ -497,9 +527,7 @@ def fetch_ticker_price(inst_id=None):
     last_err = None
     for attempt in range(1, MAX_RETRIES + 1):
         try:
-            r = requests.get(f"{OKX_BASE}/api/v5/market/ticker", params={"instId": inst_id}, timeout=10)
-            r.raise_for_status()
-            data = r.json()
+            data = okx_get("/api/v5/market/ticker", {"instId": inst_id})
             if data.get("code") != "0" or not data.get("data"):
                 raise RuntimeError(f"OKX ticker error: {data}")
             return float(data["data"][0]["last"])

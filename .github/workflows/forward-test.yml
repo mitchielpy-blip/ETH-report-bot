@@ -13,3 +13,5 @@ jobs:
           python-version: "3.12"
       - run: pip install -r requirements.txt
       - run: python forward_test_report.py
+        env:
+          OKX_PROXY: ${{ secrets.OKX_PROXY }}   # proxy OKX calls past the runner's geo-block

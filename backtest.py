@@ -42,7 +42,8 @@ import requests
 
 import eth_report_bot as bot
 
-OKX_BASE = "https://www.okx.com"
+OKX_BASE = bot.OKX_BASE   # honours the OKX_BASE env override from eth_report_bot
+OKX_PROXIES = bot.OKX_PROXIES  # route OKX calls through OKX_PROXY when set (geo-block workaround)
 PAGE_LIMIT = 100          # OKX history-candles max per request
 MAX_HOLD_CANDLES = 72     # give a filled trade up to 72 bars to hit SL/TP before timing out
 ENTRY_WAIT_CANDLES = int(os.environ.get("ENTRY_WAIT_HOURS", 8))   # give a pending pullback order this many bars to actually fill (assumes 1H bars)
@@ -95,7 +96,7 @@ def fetch_historical_candles(inst_id, bar, target_count, end_ts=None):
         if after:
             params["after"] = after
 
-        resp = requests.get(f"{OKX_BASE}/api/v5/market/history-candles", params=params, timeout=15)
+        resp = requests.get(f"{OKX_BASE}/api/v5/market/history-candles", params=params, timeout=15, proxies=OKX_PROXIES)
         resp.raise_for_status()
         data = resp.json()
         if data.get("code") != "0":
@@ -126,7 +127,7 @@ def fetch_funding_history(inst_id, start_ts, end_ts):
         params = {"instId": inst_id, "limit": "100"}
         if after:
             params["after"] = after
-        resp = requests.get(f"{OKX_BASE}/api/v5/public/funding-rate-history", params=params, timeout=15)
+        resp = requests.get(f"{OKX_BASE}/api/v5/public/funding-rate-history", params=params, timeout=15, proxies=OKX_PROXIES)
         resp.raise_for_status()
         data = resp.json()
         if data.get("code") != "0":
