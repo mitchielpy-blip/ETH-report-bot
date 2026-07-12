@@ -3,6 +3,10 @@ name: Run Pullback Sweep
 on:
   workflow_dispatch:
     inputs:
+      inst:
+        description: "Instrument to test (e.g. ETH-USDT-SWAP, BTC-USDT-SWAP)"
+        required: false
+        default: "ETH-USDT-SWAP"
       months:
         description: "How many months of history to test"
         required: false
@@ -35,7 +39,7 @@ jobs:
       - run: pip install -r requirements.txt
       - name: Run pullback sweep
         run: |
-          ARGS="--months ${{ github.event.inputs.months }} --bar ${{ github.event.inputs.bar }} --values ${{ github.event.inputs.values }}"
+          ARGS="--inst ${{ github.event.inputs.inst }} --months ${{ github.event.inputs.months }} --bar ${{ github.event.inputs.bar }} --values ${{ github.event.inputs.values }}"
           if [ -n "${{ github.event.inputs.end_date }}" ]; then
             ARGS="$ARGS --end-date ${{ github.event.inputs.end_date }}"
           fi
