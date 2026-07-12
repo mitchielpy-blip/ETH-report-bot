@@ -1,0 +1,50 @@
+name: Run Diagnostics
+
+on:
+  workflow_dispatch:
+    inputs:
+      inst:
+        description: "Instrument to diagnose (e.g. BTC-USDT-SWAP, ETH-USDT-SWAP)"
+        required: false
+        default: "BTC-USDT-SWAP"
+      months:
+        description: "How many months of history to analyze"
+        required: false
+        default: "12"
+      bar:
+        description: "Candle timeframe (1H, 15m, 4H)"
+        required: false
+        default: "1H"
+      end_date:
+        description: "Optional: end date for the window, e.g. 2025-07-12 (leave blank for most recent data)"
+        required: false
+        default: ""
+      pullback:
+        description: "PULLBACK_ATR_MULT to diagnose (leave blank to use the bot's current default)"
+        required: false
+        default: ""
+
+jobs:
+  diagnostics:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: pip install -r requirements.txt
+      - name: Run diagnostics
+        run: |
+          ARGS="--inst ${{ github.event.inputs.inst }} --months ${{ github.event.inputs.months }} --bar ${{ github.event.inputs.bar }}"
+          if [ -n "${{ github.event.inputs.end_date }}" ]; then
+            ARGS="$ARGS --end-date ${{ github.event.inputs.end_date }}"
+          fi
+          if [ -n "${{ github.event.inputs.pullback }}" ]; then
+            ARGS="$ARGS --pullback ${{ github.event.inputs.pullback }}"
+          fi
+          python -u diagnostics.py $ARGS
+      - name: Upload results
+        uses: actions/upload-artifact@v4
+        with:
+          name: diagnostic-results
+          path: diagnostic_trades.csv
