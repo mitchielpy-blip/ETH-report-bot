@@ -57,11 +57,7 @@ def signal_context(candles, i):
     adx_value = bot.adx(window)
     vol_ratio = bot.volume_ratio(window)
 
-    htf_candles = bt.resample_htf(window)
-    htf_trend = None
-    if len(htf_candles) >= 20:
-        htf_closes = [c["close"] for c in htf_candles]
-        htf_trend = "bullish" if bot.ema_last(htf_closes, 20) > bot.ema_last(htf_closes, 50) else "bearish"
+    htf_trend = bot.htf_trend_from_closes([c["close"] for c in bt.resample_htf(window)])
 
     ts = candles[i]["ts"]
     dt = datetime.fromtimestamp(ts / 1000, tz=timezone.utc)

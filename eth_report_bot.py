@@ -286,6 +286,56 @@ def support_resistance(candles, lookback=40, n_levels=3):
     return supports, resistances
 
 
+def compute_bias_score(candles):
+    """
+    Heuristic 0-100 bias score (clamped to 5-95) from completed candles.
+
+    Pure and network-free, keyed only on the candle series — the single
+    source of truth for the score, shared by the live report
+    (build_report) and the backtest (evaluate_signal_at) so both score
+    every candle identically. This is the same reason ema_last is shared:
+    the moment the two paths score differently, the backtest silently
+    stops describing the live bot. NOT a validated win-rate model.
+    """
+    closes = [c["close"] for c in candles]
+    r = rsi(closes)
+    _, _, hist = macd(closes)
+    ema20 = ema_last(closes, 20)
+    ema50 = ema_last(closes, 50)
+
+    score = 50
+    if r is not None:
+        score += (r - 50) * 0.4
+    score += 15 if ema20 > ema50 else -15
+    score += 10 if hist > 0 else -10
+
+    # Volume confirmation: above-average participation amplifies whatever
+    # direction the other indicators already lean toward; below-average
+    # volume dampens it back toward neutral (low participation = noise).
+    vol_ratio = volume_ratio(candles)
+    if vol_ratio is not None:
+        deviation = score - 50
+        if vol_ratio >= VOLUME_CONFIRM_RATIO:
+            deviation *= 1.15
+        elif vol_ratio <= VOLUME_LOW_RATIO:
+            deviation *= 0.7
+        score = 50 + deviation
+
+    return max(5, min(95, round(score)))
+
+
+def htf_trend_from_closes(closes):
+    """
+    Classify a higher-timeframe close series as 'bullish' / 'bearish' via
+    EMA20 vs EMA50, or None if there are fewer than 20 closes. Shared by
+    the live HTF fetch (higher_timeframe_trend) and the backtest's
+    resampled HTF so both classify the trend identically.
+    """
+    if len(closes) < 20:
+        return None
+    return "bullish" if ema_last(closes, 20) > ema_last(closes, 50) else "bearish"
+
+
 def higher_timeframe_trend(bar=HTF_BAR):
     """Fetch a higher timeframe and return 'bullish' / 'bearish' via EMA20 vs EMA50.
     fetch_candles already strips the in-progress candle, so this now uses
@@ -295,12 +345,7 @@ def higher_timeframe_trend(bar=HTF_BAR):
     except Exception as e:
         print(f"Could not fetch higher-timeframe data ({e}); skipping HTF filter.", file=sys.stderr)
         return None
-    closes = [c["close"] for c in htf_candles]
-    if len(closes) < 20:
-        return None
-    e20 = ema_last(closes, 20)
-    e50 = ema_last(closes, 50)
-    return "bullish" if e20 > e50 else "bearish"
+    return htf_trend_from_closes([c["close"] for c in htf_candles])
 
 
 def suggest_trade_plan(price, score, atr_value, supports, resistances, htf_trend=None, adx_value=None, previous_raw_direction=None):
@@ -390,27 +435,11 @@ def build_report(candles, previous_raw_direction=None):
     trend = "bullish structure" if ema20 > ema50 else "bearish structure"
     momentum = "momentum firming up" if hist > 0 else "momentum fading"
 
-    # Simple heuristic bias score (0-100), NOT a validated win-rate model
-    score = 50
-    if r is not None:
-        score += (r - 50) * 0.4
-    score += 15 if ema20 > ema50 else -15
-    score += 10 if hist > 0 else -10
-
-    # Volume confirmation: above-average participation amplifies whatever
-    # direction the other indicators already lean toward (a move backed by
-    # real volume is more likely genuine); below-average volume dampens it
-    # back toward neutral (low participation = more likely noise).
+    # Bias score comes from the shared scorer so the live report and the
+    # backtest can never drift apart. vol_ratio is still read here for the
+    # display line below.
+    score = compute_bias_score(candles)
     vol_ratio = volume_ratio(candles)
-    if vol_ratio is not None:
-        deviation = score - 50
-        if vol_ratio >= VOLUME_CONFIRM_RATIO:
-            deviation *= 1.15
-        elif vol_ratio <= VOLUME_LOW_RATIO:
-            deviation *= 0.7
-        score = 50 + deviation
-
-    score = max(5, min(95, round(score)))
 
     nearest_support = max([s for s in supports if s < price], default=supports[0] if supports else None)
     nearest_resistance = min([res for res in resistances if res > price], default=resistances[0] if resistances else None)

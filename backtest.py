@@ -215,40 +215,15 @@ def evaluate_signal_at(candles, i, previous_raw_direction=None):
     if len(window) < WARMUP_CANDLES:
         return None
 
-    closes = [c["close"] for c in window]
-    price = closes[-1]
-    r = bot.rsi(closes)
-    _, _, hist = bot.macd(closes)
-    ema20 = bot.ema_last(closes, 20)
-    ema50 = bot.ema_last(closes, 50)
+    price = window[-1]["close"]
     supports, resistances = bot.support_resistance(window)
     atr_value = bot.atr(window)
     adx_value = bot.adx(window)
 
-    score = 50
-    if r is not None:
-        score += (r - 50) * 0.4
-    score += 15 if ema20 > ema50 else -15
-    score += 10 if hist > 0 else -10
-
-    vol_ratio = bot.volume_ratio(window)
-    if vol_ratio is not None:
-        deviation = score - 50
-        if vol_ratio >= bot.VOLUME_CONFIRM_RATIO:
-            deviation *= 1.15
-        elif vol_ratio <= bot.VOLUME_LOW_RATIO:
-            deviation *= 0.7
-        score = 50 + deviation
-
-    score = max(5, min(95, round(score)))
-
-    htf_candles = resample_htf(window)
-    htf_trend = None
-    if len(htf_candles) >= 20:
-        htf_closes = [c["close"] for c in htf_candles]
-        e20 = bot.ema_last(htf_closes, 20)
-        e50 = bot.ema_last(htf_closes, 50)
-        htf_trend = "bullish" if e20 > e50 else "bearish"
+    # Score and HTF trend both come from the shared helpers in eth_report_bot
+    # so the backtest and the live bot can never score a candle differently.
+    score = bot.compute_bias_score(window)
+    htf_trend = bot.htf_trend_from_closes([c["close"] for c in resample_htf(window)])
 
     plan = bot.suggest_trade_plan(price, score, atr_value, supports, resistances, htf_trend, adx_value, previous_raw_direction)
     return plan
