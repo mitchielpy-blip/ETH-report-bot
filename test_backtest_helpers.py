@@ -7,9 +7,21 @@ Run with:  python -m unittest test_backtest_helpers
 """
 
 import unittest
+from unittest import mock
 
 import eth_report_bot as bot
 import backtest as bt
+
+
+def _candle(ts, high, low, close, open_=None, vol=1.0):
+    return {
+        "ts": ts,
+        "open": open_ if open_ is not None else close,
+        "high": high,
+        "low": low,
+        "close": close,
+        "vol": vol,
+    }
 
 
 class WinRateAndAvgR(unittest.TestCase):
@@ -75,6 +87,89 @@ class CandleCountMath(unittest.TestCase):
     def test_parse_end_ts(self):
         self.assertIsNone(bt.parse_end_ts(None))
         self.assertEqual(bt.parse_end_ts("2024-06-01"), 1717200000000)
+
+
+class SimulateTradeReturnsFillIndex(unittest.TestCase):
+    """simulate_trade must report which candle actually filled the entry,
+    so callers (diagnostics) don't have to re-derive the fill bar by
+    re-scanning the candles — the exact duplication finding #3 removes."""
+
+    def test_fill_index_on_a_win(self):
+        # long plan; entry gets touched two bars after the signal, then wins
+        plan = {"direction": "long", "entry": 100.0, "stop": 95.0, "target": 110.0, "rr": 2.0}
+        candles = [
+            _candle(0, 100, 100, 100),          # 0: signal bar
+            _candle(1, 103, 101, 102),          # 1: low 101 > entry -> no fill
+            _candle(2, 105, 99, 104),           # 2: low 99 <= entry -> FILLS here
+            _candle(3, 111, 104, 110),          # 3: high 111 >= target -> win
+        ]
+        # keep the fill-time thesis re-check from invalidating the trade
+        with mock.patch.object(bt, "evaluate_signal_at", return_value=dict(plan)):
+            outcome, r_multiple, exit_ts, costs, fill_index = bt.simulate_trade(candles, 0, plan)
+        self.assertEqual(outcome, "win")
+        self.assertEqual(fill_index, 2)
+        self.assertEqual(exit_ts, candles[3]["ts"])
+
+    def test_no_fill_returns_none_index(self):
+        plan = {"direction": "long", "entry": 100.0, "stop": 95.0, "target": 110.0, "rr": 2.0}
+        # price never trades down to the entry within the wait window
+        candles = [_candle(i, 205, 200, 202) for i in range(10)]
+        outcome, r_multiple, exit_ts, costs, fill_index = bt.simulate_trade(candles, 0, plan)
+        self.assertEqual(outcome, "no_fill")
+        self.assertIsNone(fill_index)
+
+
+class WalkForwardLoop(unittest.TestCase):
+    """The single shared walk-forward iterator (finding #4) must honour the
+    one-position-at-a-time busy gate and surface fill/exit indices, so both
+    run_backtest and the diagnostics loop can be built on top of it."""
+
+    def _dummy_candles(self):
+        n = bt.WARMUP_CANDLES + 10
+        return [_candle(i, 100, 100, 100) for i in range(n)]
+
+    def test_busy_gate_skips_overlapping_signals(self):
+        candles = self._dummy_candles()
+        last = len(candles) - 1
+        plan = {"direction": "long", "entry": 100.0, "stop": 95.0,
+                "target": 110.0, "rr": 2.0, "raw_direction": "long"}
+
+        def fake_simulate(cndls, i, pl, funding=None):
+            # win that exits 3 bars later, so the next 3 signals are "busy"
+            exit_index = min(i + 3, last)
+            return "win", 2.0, cndls[exit_index]["ts"], {"gross_r": 2.0, "fee_r": 0.0, "funding_r": 0.0}, i + 1
+
+        with mock.patch.object(bt, "evaluate_signal_at", return_value=dict(plan)), \
+             mock.patch.object(bt, "simulate_trade", side_effect=fake_simulate):
+            events = list(bt.walk_forward(candles, []))
+
+        wins = [e for e in events if e["outcome"] == "win"]
+        # first signal at WARMUP_CANDLES, then every 4th bar (3 busy + 1)
+        self.assertEqual([e["signal_index"] for e in wins],
+                         [bt.WARMUP_CANDLES, bt.WARMUP_CANDLES + 4, bt.WARMUP_CANDLES + 8])
+        first = wins[0]
+        self.assertEqual(first["fill_index"], bt.WARMUP_CANDLES + 1)
+        self.assertEqual(first["exit_index"], bt.WARMUP_CANDLES + 3)
+
+    def test_no_fill_events_counted_but_do_not_block(self):
+        candles = self._dummy_candles()
+        plan = {"direction": "long", "entry": 100.0, "stop": 95.0,
+                "target": 110.0, "rr": 2.0, "raw_direction": "long"}
+
+        def always_no_fill(cndls, i, pl, funding=None):
+            return "no_fill", 0.0, None, None, None
+
+        with mock.patch.object(bt, "evaluate_signal_at", return_value=dict(plan)), \
+             mock.patch.object(bt, "simulate_trade", side_effect=always_no_fill):
+            events = list(bt.walk_forward(candles, []))
+            trades, no_fill_count, invalidated_count = bt.run_backtest(candles, [])
+
+        # every iteration produced a signal, none of them blocked the next
+        iterations = len(range(bt.WARMUP_CANDLES, len(candles) - 1))
+        self.assertEqual(len(events), iterations)
+        self.assertTrue(all(e["outcome"] == "no_fill" for e in events))
+        self.assertTrue(all(e["exit_index"] is None for e in events))
+        self.assertEqual((trades, no_fill_count, invalidated_count), ([], iterations, 0))
 
 
 if __name__ == "__main__":

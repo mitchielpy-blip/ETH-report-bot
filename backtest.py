@@ -246,8 +246,10 @@ def simulate_trade(candles, signal_index, plan, funding_events=None):
     Once filled, walk forward until stop or target is hit, or
     MAX_HOLD_CANDLES elapses (timeout, marked-to-market at last close).
 
-    Returns (outcome, net_r_multiple, exit_ts, cost_breakdown) where
-    cost_breakdown = {"gross_r", "fee_r", "funding_r"}.
+    Returns (outcome, net_r_multiple, exit_ts, cost_breakdown, fill_index)
+    where cost_breakdown = {"gross_r", "fee_r", "funding_r"} and fill_index
+    is the candle index the entry actually filled on (None if it never
+    filled) — so callers can report fill delay without re-scanning candles.
     """
     funding_events = funding_events or []
     direction = plan["direction"]
@@ -265,7 +267,7 @@ def simulate_trade(candles, signal_index, plan, funding_events=None):
             break
 
     if fill_index is None:
-        return "no_fill", 0.0, None, None
+        return "no_fill", 0.0, None, None, None
 
     # Re-check the thesis at fill time. A pullback entry can take a while
     # to actually get touched — if the setup has flipped by then, the
@@ -276,14 +278,14 @@ def simulate_trade(candles, signal_index, plan, funding_events=None):
     # a fresh 2-hour confirmation at fill time.
     fresh_plan = evaluate_signal_at(candles, fill_index, previous_raw_direction=direction)
     if not fresh_plan or fresh_plan["direction"] != direction:
-        return "invalidated", 0.0, None, None
+        return "invalidated", 0.0, None, None, fill_index
 
     fill_ts = candles[fill_index]["ts"]
 
     def finalize(outcome, gross_r, exit_ts):
         fee_r, funding_r = compute_trade_costs(direction, entry, risk, fill_ts, exit_ts, funding_events)
         net_r = gross_r - fee_r + funding_r
-        return outcome, net_r, exit_ts, {"gross_r": gross_r, "fee_r": fee_r, "funding_r": funding_r}
+        return outcome, net_r, exit_ts, {"gross_r": gross_r, "fee_r": fee_r, "funding_r": funding_r}, fill_index
 
     for j in range(fill_index, min(fill_index + MAX_HOLD_CANDLES, len(candles))):
         c = candles[j]
@@ -309,10 +311,21 @@ def simulate_trade(candles, signal_index, plan, funding_events=None):
     return finalize("timeout", r_multiple, candles[last_index]["ts"])
 
 
-def run_backtest(candles, funding_events=None):
-    trades = []
-    no_fill_count = 0
-    invalidated_count = 0
+def walk_forward(candles, funding_events=None):
+    """
+    The single walk-forward pass shared by the plain backtest and the
+    diagnostics run. Steps through the candles once, applying the live
+    bot's persistence gate and the one-position-at-a-time busy rule, and
+    yields one event dict per signal that isn't blocked by an open trade:
+
+        {"signal_index", "plan", "outcome", "r_multiple", "exit_ts",
+         "costs", "fill_index", "exit_index"}
+
+    Events are yielded for "no_fill" and "invalidated" signals too (so
+    callers can count them); those carry exit_index=None and never advance
+    the busy gate. For a filled trade, exit_index is the candle the trade
+    closed on, so callers get fill delay and hold time without re-scanning.
+    """
     busy_until = -1  # don't take overlapping trades — one position at a time
     previous_raw_direction = None  # tracked every hour, matching the live bot's persistence gate
 
@@ -325,31 +338,55 @@ def run_backtest(candles, funding_events=None):
         if not plan or not plan["direction"]:
             continue
 
-        outcome, r_multiple, exit_ts, costs = simulate_trade(candles, i, plan, funding_events)
-        if outcome == "no_fill":
+        outcome, r_multiple, exit_ts, costs, fill_index = simulate_trade(candles, i, plan, funding_events)
+
+        if outcome in ("no_fill", "invalidated"):
+            yield {
+                "signal_index": i, "plan": plan, "outcome": outcome,
+                "r_multiple": r_multiple, "exit_ts": exit_ts, "costs": costs,
+                "fill_index": fill_index, "exit_index": None,
+            }
+            continue
+
+        # find index of exit_ts to know when we're free to trade again
+        exit_index = next((k for k in range(i + 1, len(candles)) if candles[k]["ts"] == exit_ts),
+                          i + ENTRY_WAIT_CANDLES + MAX_HOLD_CANDLES)
+        busy_until = exit_index
+        yield {
+            "signal_index": i, "plan": plan, "outcome": outcome,
+            "r_multiple": r_multiple, "exit_ts": exit_ts, "costs": costs,
+            "fill_index": fill_index, "exit_index": exit_index,
+        }
+
+
+def run_backtest(candles, funding_events=None):
+    trades = []
+    no_fill_count = 0
+    invalidated_count = 0
+
+    for ev in walk_forward(candles, funding_events):
+        if ev["outcome"] == "no_fill":
             no_fill_count += 1
             continue
-        if outcome == "invalidated":
+        if ev["outcome"] == "invalidated":
             invalidated_count += 1
             continue
 
+        plan, costs = ev["plan"], ev["costs"]
         trades.append({
-            "entry_ts": candles[i]["ts"],
+            "entry_ts": candles[ev["signal_index"]]["ts"],
             "direction": plan["direction"],
             "entry": plan["entry"],
             "stop": plan["stop"],
             "target": plan["target"],
             "rr_planned": plan["rr"],
-            "outcome": outcome,
+            "outcome": ev["outcome"],
             "gross_r": costs["gross_r"],
             "fee_r": costs["fee_r"],
             "funding_r": costs["funding_r"],
-            "r_multiple": r_multiple,  # net of fees and funding
-            "exit_ts": exit_ts,
+            "r_multiple": ev["r_multiple"],  # net of fees and funding
+            "exit_ts": ev["exit_ts"],
         })
-        # find index of exit_ts to know when we're free to trade again
-        exit_index = next((k for k in range(i + 1, len(candles)) if candles[k]["ts"] == exit_ts), i + ENTRY_WAIT_CANDLES + MAX_HOLD_CANDLES)
-        busy_until = exit_index
 
     return trades, no_fill_count, invalidated_count
 

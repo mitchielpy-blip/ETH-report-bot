@@ -72,7 +72,7 @@ def main():
             "rr": float(s["rr"]) if s["rr"] else None,
         }
 
-        outcome, r_multiple, exit_ts, costs = bt.simulate_trade(candles, signal_index, plan, funding_events)
+        outcome, r_multiple, exit_ts, costs, _fill_index = bt.simulate_trade(candles, signal_index, plan, funding_events)
         if outcome in ("no_fill", "invalidated"):
             results.append({"outcome": outcome, "r_multiple": 0.0})
             continue

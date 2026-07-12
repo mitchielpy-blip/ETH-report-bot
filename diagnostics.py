@@ -131,61 +131,43 @@ def bucket_fill_delay(bars):
 
 
 # ----------------------------------------------------------------------
-# Backtest loop with context capture (mirrors bt.run_backtest exactly)
+# Backtest loop with context capture
 # ----------------------------------------------------------------------
+# The walk-forward mechanics (persistence gate, one-position-at-a-time,
+# fill/exit bookkeeping) live in bt.walk_forward so this stays identical to
+# the plain backtest. Here we only add the per-signal context capture and
+# reshape each filled trade into an enriched row.
 
 def run_diagnostic_backtest(candles, funding_events):
     enriched_trades = []
-    busy_until = -1
-    previous_raw_direction = None
 
-    for i in range(bt.WARMUP_CANDLES, len(candles) - 1):
-        plan = bt.evaluate_signal_at(candles, i, previous_raw_direction)
-        previous_raw_direction = plan.get("raw_direction") if plan else None
-
-        if i <= busy_until:
-            continue
-        if not plan or not plan["direction"]:
+    for ev in bt.walk_forward(candles, funding_events):
+        if ev["outcome"] in ("no_fill", "invalidated"):
             continue
 
-        outcome, r_multiple, exit_ts, costs = bt.simulate_trade(candles, i, plan, funding_events)
-        if outcome in ("no_fill", "invalidated"):
-            continue
-
+        i = ev["signal_index"]
+        plan = ev["plan"]
         ctx = signal_context(candles, i)
 
-        # fill delay: find the fill bar the same way simulate_trade does
-        fill_bars = None
-        for j in range(i + 1, min(i + 1 + bt.ENTRY_WAIT_CANDLES, len(candles))):
-            c = candles[j]
-            if plan["direction"] == "long" and c["low"] <= plan["entry"]:
-                fill_bars = j - i
-                break
-            if plan["direction"] == "short" and c["high"] >= plan["entry"]:
-                fill_bars = j - i
-                break
-
-        hold_bars = None
-        if exit_ts is not None and fill_bars is not None:
-            exit_index = next((k for k in range(i + 1, len(candles)) if candles[k]["ts"] == exit_ts), None)
-            if exit_index is not None:
-                hold_bars = exit_index - (i + fill_bars)
+        # fill/hold delays come straight from the walk-forward event — no
+        # need to re-scan the candles for the fill or exit bar.
+        fill_index = ev["fill_index"]
+        exit_index = ev["exit_index"]
+        fill_bars = fill_index - i if fill_index is not None else None
+        hold_bars = (exit_index - fill_index
+                     if exit_index is not None and fill_index is not None else None)
 
         enriched_trades.append({
             **ctx,
             "direction": plan["direction"],
             "entry": plan["entry"],
             "planned_rr": plan["rr"],
-            "outcome": outcome,
-            "net_r": r_multiple,
-            "gross_r": costs["gross_r"],
+            "outcome": ev["outcome"],
+            "net_r": ev["r_multiple"],
+            "gross_r": ev["costs"]["gross_r"],
             "fill_delay_bars": fill_bars,
             "hold_bars": hold_bars,
         })
-
-        exit_index = next((k for k in range(i + 1, len(candles)) if candles[k]["ts"] == exit_ts),
-                          i + bt.ENTRY_WAIT_CANDLES + bt.MAX_HOLD_CANDLES)
-        busy_until = exit_index
 
     return enriched_trades
 
