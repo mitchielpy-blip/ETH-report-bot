@@ -44,6 +44,7 @@ SGT = timezone(timedelta(hours=8))  # Singapore Time, UTC+8, no DST
 
 OKX_BASE = "https://www.okx.com"
 INST_ID = os.environ.get("INST_ID", "ETH-USDT-SWAP")   # perpetual swap
+ASSET = INST_ID.split("-")[0]                            # e.g. "ETH", "BTC" — used in report titles
 BAR = os.environ.get("BAR", "1H")                       # candle size
 HTF_BAR = os.environ.get("HTF_BAR", "4H")                # higher-timeframe filter
 LOOKBACK = 200                                            # completed candles to analyze
@@ -419,7 +420,7 @@ def build_report(candles, previous_raw_direction=None):
     plan = suggest_trade_plan(price, score, atr_value, supports, resistances, htf_trend, adx_value, previous_raw_direction)
 
     lines = []
-    lines.append(f"**ETH Hourly Report · {datetime.now(SGT).strftime('%Y-%m-%d %H:%M')} SGT**")
+    lines.append(f"**{ASSET} Hourly Report · {datetime.now(SGT).strftime('%Y-%m-%d %H:%M')} SGT**")
     lines.append(f"Price: ${price:,.2f} (last completed {BAR} close)")
     lines.append(f"Trend ({BAR}): {trend}, {momentum}")
     if htf_trend:
@@ -548,10 +549,18 @@ def post_to_discord(content):
         print(content)
         return
 
+    payload = {"content": content}
+    # Optional display-name override: lets multiple bots share one webhook/
+    # channel while appearing under different names (e.g. "BTC Pulse").
+    # If unset, posts under the webhook's default configured name.
+    bot_name = os.environ.get("DISCORD_BOT_NAME")
+    if bot_name:
+        payload["username"] = bot_name
+
     last_err = None
     for attempt in range(1, MAX_RETRIES + 1):
         try:
-            resp = requests.post(WEBHOOK_URL, json={"content": content}, timeout=10)
+            resp = requests.post(WEBHOOK_URL, json=payload, timeout=10)
             if resp.status_code < 300:
                 return
             last_err = f"{resp.status_code}: {resp.text}"
