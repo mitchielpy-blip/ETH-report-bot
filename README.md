@@ -114,7 +114,21 @@ parameter as provisional, not settled.
    - Name: `DISCORD_WEBHOOK_URL`
    - Value: (paste the webhook URL)
 
-4. **Done.** GitHub will run the workflow every hour automatically (the
+4. **If OKX geo-blocks GitHub's runners, add a proxy secret** (`OKX_PROXY`)
+   - GitHub-hosted runners run from US/Azure IPs. OKX geo-restricts those and
+     answers the API with an **HTTP 307 redirect** instead of price data, so
+     the scheduled jobs fail even though the same code works on your machine.
+   - The fix is to route *only* the OKX calls through a proxy in a region OKX
+     serves (Discord posts and the state commit stay direct):
+     - Repo → Settings → Secrets and variables → Actions → New repository secret
+     - Name: `OKX_PROXY`
+     - Value: your proxy URL, e.g. `http://user:pass@host:port` (or `socks5h://…`
+       — if you use a SOCKS proxy, add `requests[socks]` to `requirements.txt`).
+   - Leave `OKX_PROXY` unset when running locally from an allowed region; the
+     bot calls OKX directly in that case. If a run ever fails with the "OKX
+     redirected the request … Set the OKX_PROXY secret" error, this is why.
+
+5. **Done.** GitHub will run the workflow every hour automatically (the
    `cron: "7 * * * *"` line in the workflow file). You can also trigger it
    manually anytime from the repo's Actions tab ("Run workflow").
 

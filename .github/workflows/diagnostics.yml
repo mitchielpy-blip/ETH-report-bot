@@ -43,6 +43,8 @@ jobs:
             ARGS="$ARGS --pullback ${{ github.event.inputs.pullback }}"
           fi
           python -u diagnostics.py $ARGS
+        env:
+          OKX_PROXY: ${{ secrets.OKX_PROXY }}   # proxy OKX calls past the runner's geo-block
       - name: Upload results
         uses: actions/upload-artifact@v4
         with:

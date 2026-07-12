@@ -57,11 +57,7 @@ def signal_context(candles, i):
     adx_value = bot.adx(window)
     vol_ratio = bot.volume_ratio(window)
 
-    htf_candles = bt.resample_htf(window)
-    htf_trend = None
-    if len(htf_candles) >= 20:
-        htf_closes = [c["close"] for c in htf_candles]
-        htf_trend = "bullish" if bot.ema_last(htf_closes, 20) > bot.ema_last(htf_closes, 50) else "bearish"
+    htf_trend = bot.htf_trend_from_closes([c["close"] for c in bt.resample_htf(window)])
 
     ts = candles[i]["ts"]
     dt = datetime.fromtimestamp(ts / 1000, tz=timezone.utc)
@@ -135,61 +131,43 @@ def bucket_fill_delay(bars):
 
 
 # ----------------------------------------------------------------------
-# Backtest loop with context capture (mirrors bt.run_backtest exactly)
+# Backtest loop with context capture
 # ----------------------------------------------------------------------
+# The walk-forward mechanics (persistence gate, one-position-at-a-time,
+# fill/exit bookkeeping) live in bt.walk_forward so this stays identical to
+# the plain backtest. Here we only add the per-signal context capture and
+# reshape each filled trade into an enriched row.
 
 def run_diagnostic_backtest(candles, funding_events):
     enriched_trades = []
-    busy_until = -1
-    previous_raw_direction = None
 
-    for i in range(bt.WARMUP_CANDLES, len(candles) - 1):
-        plan = bt.evaluate_signal_at(candles, i, previous_raw_direction)
-        previous_raw_direction = plan.get("raw_direction") if plan else None
-
-        if i <= busy_until:
-            continue
-        if not plan or not plan["direction"]:
+    for ev in bt.walk_forward(candles, funding_events):
+        if ev["outcome"] in ("no_fill", "invalidated"):
             continue
 
-        outcome, r_multiple, exit_ts, costs = bt.simulate_trade(candles, i, plan, funding_events)
-        if outcome in ("no_fill", "invalidated"):
-            continue
-
+        i = ev["signal_index"]
+        plan = ev["plan"]
         ctx = signal_context(candles, i)
 
-        # fill delay: find the fill bar the same way simulate_trade does
-        fill_bars = None
-        for j in range(i + 1, min(i + 1 + bt.ENTRY_WAIT_CANDLES, len(candles))):
-            c = candles[j]
-            if plan["direction"] == "long" and c["low"] <= plan["entry"]:
-                fill_bars = j - i
-                break
-            if plan["direction"] == "short" and c["high"] >= plan["entry"]:
-                fill_bars = j - i
-                break
-
-        hold_bars = None
-        if exit_ts is not None and fill_bars is not None:
-            exit_index = next((k for k in range(i + 1, len(candles)) if candles[k]["ts"] == exit_ts), None)
-            if exit_index is not None:
-                hold_bars = exit_index - (i + fill_bars)
+        # fill/hold delays come straight from the walk-forward event — no
+        # need to re-scan the candles for the fill or exit bar.
+        fill_index = ev["fill_index"]
+        exit_index = ev["exit_index"]
+        fill_bars = fill_index - i if fill_index is not None else None
+        hold_bars = (exit_index - fill_index
+                     if exit_index is not None and fill_index is not None else None)
 
         enriched_trades.append({
             **ctx,
             "direction": plan["direction"],
             "entry": plan["entry"],
             "planned_rr": plan["rr"],
-            "outcome": outcome,
-            "net_r": r_multiple,
-            "gross_r": costs["gross_r"],
+            "outcome": ev["outcome"],
+            "net_r": ev["r_multiple"],
+            "gross_r": ev["costs"]["gross_r"],
             "fill_delay_bars": fill_bars,
             "hold_bars": hold_bars,
         })
-
-        exit_index = next((k for k in range(i + 1, len(candles)) if candles[k]["ts"] == exit_ts),
-                          i + bt.ENTRY_WAIT_CANDLES + bt.MAX_HOLD_CANDLES)
-        busy_until = exit_index
 
     return enriched_trades
 
@@ -210,11 +188,7 @@ def breakdown(trades, key_fn, title):
     print("-" * len(header))
     for k in sorted(groups.keys(), key=str):
         ts = groups[k]
-        wins = [t for t in ts if t["outcome"] == "win"]
-        losses = [t for t in ts if t["outcome"] == "loss"]
-        decided = wins + losses
-        win_rate = len(wins) / len(decided) * 100 if decided else 0.0
-        avg_r = sum(t["net_r"] for t in ts) / len(ts)
+        win_rate, avg_r = bt.win_rate_and_avg_r(ts, r_key="net_r")
         total_r = sum(t["net_r"] for t in ts)
         flag = "  (!) tiny sample" if len(ts) < 8 else ""
         print(f"{str(k):<22} {len(ts):>4} {win_rate:>5.1f}% {avg_r:>+8.3f} {total_r:>+8.2f}{flag}")
@@ -247,13 +221,8 @@ def main():
         bot.PULLBACK_ATR_MULT = args.pullback
     print(f"Diagnosing {args.inst} @ PULLBACK_ATR_MULT={bot.PULLBACK_ATR_MULT}")
 
-    bars_per_month = {"1H": 24 * 30, "15m": 24 * 4 * 30, "4H": 6 * 30}
-    target_count = int(bars_per_month.get(args.bar, 24 * 30) * args.months) + bt.WARMUP_CANDLES
-
-    end_ts = None
-    if args.end_date:
-        end_dt = datetime.strptime(args.end_date, "%Y-%m-%d").replace(tzinfo=timezone.utc)
-        end_ts = int(end_dt.timestamp() * 1000)
+    target_count = bt.target_count_for(args.bar, args.months)
+    end_ts = bt.parse_end_ts(args.end_date)
 
     print(f"Fetching ~{target_count} {args.bar} candles for {args.inst}"
           + (f" ending {args.end_date}" if args.end_date else "") + " ...")

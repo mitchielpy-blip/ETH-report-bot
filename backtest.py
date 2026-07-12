@@ -42,7 +42,8 @@ import requests
 
 import eth_report_bot as bot
 
-OKX_BASE = "https://www.okx.com"
+OKX_BASE = bot.OKX_BASE   # honours the OKX_BASE env override from eth_report_bot
+OKX_PROXIES = bot.OKX_PROXIES  # route OKX calls through OKX_PROXY when set (geo-block workaround)
 PAGE_LIMIT = 100          # OKX history-candles max per request
 MAX_HOLD_CANDLES = 72     # give a filled trade up to 72 bars to hit SL/TP before timing out
 ENTRY_WAIT_CANDLES = int(os.environ.get("ENTRY_WAIT_HOURS", 8))   # give a pending pullback order this many bars to actually fill (assumes 1H bars)
@@ -57,6 +58,25 @@ EXIT_FEE_PCT = 0.05    # stop-loss/take-profit triggers execute as market -> tak
 
 HTF_GROUP_HOURS = 4
 HTF_GROUP_MS = HTF_GROUP_HOURS * 3600 * 1000
+
+# Approximate candles per month per bar size, used to translate a --months
+# argument into a fetch count. Shared by backtest.py, backtest_sweep.py and
+# diagnostics.py so they all size their windows identically.
+BARS_PER_MONTH = {"1H": 24 * 30, "15m": 24 * 4 * 30, "4H": 6 * 30}
+
+
+def target_count_for(bar, months):
+    """How many candles to fetch for `months` of `bar`-sized bars, including
+    the warmup the first signal needs. Unknown bars fall back to 1H sizing."""
+    return int(BARS_PER_MONTH.get(bar, 24 * 30) * months) + WARMUP_CANDLES
+
+
+def parse_end_ts(end_date):
+    """Millisecond UTC timestamp for a 'YYYY-MM-DD' end date, or None."""
+    if not end_date:
+        return None
+    end_dt = datetime.strptime(end_date, "%Y-%m-%d").replace(tzinfo=timezone.utc)
+    return int(end_dt.timestamp() * 1000)
 
 
 def fetch_historical_candles(inst_id, bar, target_count, end_ts=None):
@@ -76,7 +96,7 @@ def fetch_historical_candles(inst_id, bar, target_count, end_ts=None):
         if after:
             params["after"] = after
 
-        resp = requests.get(f"{OKX_BASE}/api/v5/market/history-candles", params=params, timeout=15)
+        resp = requests.get(f"{OKX_BASE}/api/v5/market/history-candles", params=params, timeout=15, proxies=OKX_PROXIES)
         resp.raise_for_status()
         data = resp.json()
         if data.get("code") != "0":
@@ -90,18 +110,7 @@ def fetch_historical_candles(inst_id, bar, target_count, end_ts=None):
         time.sleep(0.15)     # be polite to the rate limit
 
     all_rows.reverse()  # oldest -> newest
-    candles = [
-        {
-            "ts": int(row[0]),
-            "open": float(row[1]),
-            "high": float(row[2]),
-            "low": float(row[3]),
-            "close": float(row[4]),
-            "vol": float(row[5]),
-        }
-        for row in all_rows[-target_count:]
-    ]
-    return candles
+    return [bot.parse_candle_row(row) for row in all_rows[-target_count:]]
 
 
 def fetch_funding_history(inst_id, start_ts, end_ts):
@@ -118,7 +127,7 @@ def fetch_funding_history(inst_id, start_ts, end_ts):
         params = {"instId": inst_id, "limit": "100"}
         if after:
             params["after"] = after
-        resp = requests.get(f"{OKX_BASE}/api/v5/public/funding-rate-history", params=params, timeout=15)
+        resp = requests.get(f"{OKX_BASE}/api/v5/public/funding-rate-history", params=params, timeout=15, proxies=OKX_PROXIES)
         resp.raise_for_status()
         data = resp.json()
         if data.get("code") != "0":
@@ -215,40 +224,15 @@ def evaluate_signal_at(candles, i, previous_raw_direction=None):
     if len(window) < WARMUP_CANDLES:
         return None
 
-    closes = [c["close"] for c in window]
-    price = closes[-1]
-    r = bot.rsi(closes)
-    _, _, hist = bot.macd(closes)
-    ema20 = bot.ema_last(closes, 20)
-    ema50 = bot.ema_last(closes, 50)
+    price = window[-1]["close"]
     supports, resistances = bot.support_resistance(window)
     atr_value = bot.atr(window)
     adx_value = bot.adx(window)
 
-    score = 50
-    if r is not None:
-        score += (r - 50) * 0.4
-    score += 15 if ema20 > ema50 else -15
-    score += 10 if hist > 0 else -10
-
-    vol_ratio = bot.volume_ratio(window)
-    if vol_ratio is not None:
-        deviation = score - 50
-        if vol_ratio >= bot.VOLUME_CONFIRM_RATIO:
-            deviation *= 1.15
-        elif vol_ratio <= bot.VOLUME_LOW_RATIO:
-            deviation *= 0.7
-        score = 50 + deviation
-
-    score = max(5, min(95, round(score)))
-
-    htf_candles = resample_htf(window)
-    htf_trend = None
-    if len(htf_candles) >= 20:
-        htf_closes = [c["close"] for c in htf_candles]
-        e20 = bot.ema_last(htf_closes, 20)
-        e50 = bot.ema_last(htf_closes, 50)
-        htf_trend = "bullish" if e20 > e50 else "bearish"
+    # Score and HTF trend both come from the shared helpers in eth_report_bot
+    # so the backtest and the live bot can never score a candle differently.
+    score = bot.compute_bias_score(window)
+    htf_trend = bot.htf_trend_from_closes([c["close"] for c in resample_htf(window)])
 
     plan = bot.suggest_trade_plan(price, score, atr_value, supports, resistances, htf_trend, adx_value, previous_raw_direction)
     return plan
@@ -263,8 +247,10 @@ def simulate_trade(candles, signal_index, plan, funding_events=None):
     Once filled, walk forward until stop or target is hit, or
     MAX_HOLD_CANDLES elapses (timeout, marked-to-market at last close).
 
-    Returns (outcome, net_r_multiple, exit_ts, cost_breakdown) where
-    cost_breakdown = {"gross_r", "fee_r", "funding_r"}.
+    Returns (outcome, net_r_multiple, exit_ts, cost_breakdown, fill_index)
+    where cost_breakdown = {"gross_r", "fee_r", "funding_r"} and fill_index
+    is the candle index the entry actually filled on (None if it never
+    filled) — so callers can report fill delay without re-scanning candles.
     """
     funding_events = funding_events or []
     direction = plan["direction"]
@@ -282,7 +268,7 @@ def simulate_trade(candles, signal_index, plan, funding_events=None):
             break
 
     if fill_index is None:
-        return "no_fill", 0.0, None, None
+        return "no_fill", 0.0, None, None, None
 
     # Re-check the thesis at fill time. A pullback entry can take a while
     # to actually get touched — if the setup has flipped by then, the
@@ -293,14 +279,14 @@ def simulate_trade(candles, signal_index, plan, funding_events=None):
     # a fresh 2-hour confirmation at fill time.
     fresh_plan = evaluate_signal_at(candles, fill_index, previous_raw_direction=direction)
     if not fresh_plan or fresh_plan["direction"] != direction:
-        return "invalidated", 0.0, None, None
+        return "invalidated", 0.0, None, None, fill_index
 
     fill_ts = candles[fill_index]["ts"]
 
     def finalize(outcome, gross_r, exit_ts):
         fee_r, funding_r = compute_trade_costs(direction, entry, risk, fill_ts, exit_ts, funding_events)
         net_r = gross_r - fee_r + funding_r
-        return outcome, net_r, exit_ts, {"gross_r": gross_r, "fee_r": fee_r, "funding_r": funding_r}
+        return outcome, net_r, exit_ts, {"gross_r": gross_r, "fee_r": fee_r, "funding_r": funding_r}, fill_index
 
     for j in range(fill_index, min(fill_index + MAX_HOLD_CANDLES, len(candles))):
         c = candles[j]
@@ -326,10 +312,21 @@ def simulate_trade(candles, signal_index, plan, funding_events=None):
     return finalize("timeout", r_multiple, candles[last_index]["ts"])
 
 
-def run_backtest(candles, funding_events=None):
-    trades = []
-    no_fill_count = 0
-    invalidated_count = 0
+def walk_forward(candles, funding_events=None):
+    """
+    The single walk-forward pass shared by the plain backtest and the
+    diagnostics run. Steps through the candles once, applying the live
+    bot's persistence gate and the one-position-at-a-time busy rule, and
+    yields one event dict per signal that isn't blocked by an open trade:
+
+        {"signal_index", "plan", "outcome", "r_multiple", "exit_ts",
+         "costs", "fill_index", "exit_index"}
+
+    Events are yielded for "no_fill" and "invalidated" signals too (so
+    callers can count them); those carry exit_index=None and never advance
+    the busy gate. For a filled trade, exit_index is the candle the trade
+    closed on, so callers get fill delay and hold time without re-scanning.
+    """
     busy_until = -1  # don't take overlapping trades — one position at a time
     previous_raw_direction = None  # tracked every hour, matching the live bot's persistence gate
 
@@ -342,33 +339,90 @@ def run_backtest(candles, funding_events=None):
         if not plan or not plan["direction"]:
             continue
 
-        outcome, r_multiple, exit_ts, costs = simulate_trade(candles, i, plan, funding_events)
-        if outcome == "no_fill":
+        outcome, r_multiple, exit_ts, costs, fill_index = simulate_trade(candles, i, plan, funding_events)
+
+        if outcome in ("no_fill", "invalidated"):
+            yield {
+                "signal_index": i, "plan": plan, "outcome": outcome,
+                "r_multiple": r_multiple, "exit_ts": exit_ts, "costs": costs,
+                "fill_index": fill_index, "exit_index": None,
+            }
+            continue
+
+        # find index of exit_ts to know when we're free to trade again
+        exit_index = next((k for k in range(i + 1, len(candles)) if candles[k]["ts"] == exit_ts),
+                          i + ENTRY_WAIT_CANDLES + MAX_HOLD_CANDLES)
+        busy_until = exit_index
+        yield {
+            "signal_index": i, "plan": plan, "outcome": outcome,
+            "r_multiple": r_multiple, "exit_ts": exit_ts, "costs": costs,
+            "fill_index": fill_index, "exit_index": exit_index,
+        }
+
+
+def run_backtest(candles, funding_events=None):
+    trades = []
+    no_fill_count = 0
+    invalidated_count = 0
+
+    for ev in walk_forward(candles, funding_events):
+        if ev["outcome"] == "no_fill":
             no_fill_count += 1
             continue
-        if outcome == "invalidated":
+        if ev["outcome"] == "invalidated":
             invalidated_count += 1
             continue
 
+        plan, costs = ev["plan"], ev["costs"]
         trades.append({
-            "entry_ts": candles[i]["ts"],
+            "entry_ts": candles[ev["signal_index"]]["ts"],
             "direction": plan["direction"],
             "entry": plan["entry"],
             "stop": plan["stop"],
             "target": plan["target"],
             "rr_planned": plan["rr"],
-            "outcome": outcome,
+            "outcome": ev["outcome"],
             "gross_r": costs["gross_r"],
             "fee_r": costs["fee_r"],
             "funding_r": costs["funding_r"],
-            "r_multiple": r_multiple,  # net of fees and funding
-            "exit_ts": exit_ts,
+            "r_multiple": ev["r_multiple"],  # net of fees and funding
+            "exit_ts": ev["exit_ts"],
         })
-        # find index of exit_ts to know when we're free to trade again
-        exit_index = next((k for k in range(i + 1, len(candles)) if candles[k]["ts"] == exit_ts), i + ENTRY_WAIT_CANDLES + MAX_HOLD_CANDLES)
-        busy_until = exit_index
 
     return trades, no_fill_count, invalidated_count
+
+
+def win_rate_and_avg_r(trades, r_key="r_multiple"):
+    """
+    (win_rate_pct, avg_r) over `trades`. Win rate excludes timeouts
+    (only decided win/loss trades count); average R is over every trade,
+    read from `r_key`. Empty input returns (0.0, 0.0). Shared by every
+    summary path so they compute these two headline numbers identically.
+    """
+    if not trades:
+        return 0.0, 0.0
+    wins = sum(1 for t in trades if t["outcome"] == "win")
+    losses = sum(1 for t in trades if t["outcome"] == "loss")
+    decided = wins + losses
+    win_rate = wins / decided * 100 if decided else 0.0
+    avg_r = sum(t[r_key] for t in trades) / len(trades)
+    return win_rate, avg_r
+
+
+def equity_and_drawdown(trades, risk_pct=RISK_PER_TRADE_PCT, r_key="r_multiple"):
+    """
+    Simulated equity curve (starting at 100, risking `risk_pct`% per trade)
+    and the max drawdown % along it. Returns (equity_list, max_dd_pct).
+    Shared by summarize() and the sweep so both simulate equity identically.
+    """
+    equity = [100.0]
+    for t in trades:
+        equity.append(equity[-1] * (1 + t[r_key] * risk_pct / 100))
+    peak, max_dd = equity[0], 0.0
+    for e in equity:
+        peak = max(peak, e)
+        max_dd = max(max_dd, (peak - e) / peak * 100)
+    return equity, max_dd
 
 
 def summarize(trades, no_fill_count=0, invalidated_count=0):
@@ -384,26 +438,14 @@ def summarize(trades, no_fill_count=0, invalidated_count=0):
     wins = [t for t in trades if t["outcome"] == "win"]
     losses = [t for t in trades if t["outcome"] == "loss"]
     timeouts = [t for t in trades if t["outcome"] == "timeout"]
-    decided = wins + losses  # excludes timeouts from win-rate math
 
-    win_rate = len(wins) / len(decided) * 100 if decided else 0.0
-    avg_r = sum(t["r_multiple"] for t in trades) / len(trades)
+    win_rate, avg_r = win_rate_and_avg_r(trades)
     avg_gross_r = sum(t["gross_r"] for t in trades) / len(trades)
     avg_fee_r = sum(t["fee_r"] for t in trades) / len(trades)
     avg_funding_r = sum(t["funding_r"] for t in trades) / len(trades)
     expectancy = avg_r  # already in R-multiples, 1R = planned risk per trade
 
-    # Equity curve assuming fixed % risk per trade
-    equity = [100.0]
-    for t in trades:
-        equity.append(equity[-1] * (1 + t["r_multiple"] * RISK_PER_TRADE_PCT / 100))
-
-    peak = equity[0]
-    max_dd = 0.0
-    for e in equity:
-        peak = max(peak, e)
-        dd = (peak - e) / peak * 100
-        max_dd = max(max_dd, dd)
+    equity, max_dd = equity_and_drawdown(trades)
 
     print(f"Total signals traded: {len(trades)}")
     print(f"  Wins: {len(wins)}   Losses: {len(losses)}   Timeouts: {len(timeouts)}")
@@ -455,11 +497,7 @@ def quick_stats(trades):
     """One-line stats for a subset of trades, used by the split comparison."""
     if not trades:
         return "no trades"
-    wins = [t for t in trades if t["outcome"] == "win"]
-    losses = [t for t in trades if t["outcome"] == "loss"]
-    decided = wins + losses
-    win_rate = len(wins) / len(decided) * 100 if decided else 0.0
-    avg_r = sum(t["r_multiple"] for t in trades) / len(trades)
+    win_rate, avg_r = win_rate_and_avg_r(trades)
     return f"{len(trades)} trades, win rate {win_rate:.1f}%, avg {avg_r:+.2f}R/trade"
 
 
@@ -491,13 +529,8 @@ def main():
                               "Use this to test an earlier out-of-sample period.")
     args = parser.parse_args()
 
-    bars_per_month = {"1H": 24 * 30, "15m": 24 * 4 * 30, "4H": 6 * 30}
-    target_count = int(bars_per_month.get(args.bar, 24 * 30) * args.months) + WARMUP_CANDLES
-
-    end_ts = None
-    if args.end_date:
-        end_dt = datetime.strptime(args.end_date, "%Y-%m-%d").replace(tzinfo=timezone.utc)
-        end_ts = int(end_dt.timestamp() * 1000)
+    target_count = target_count_for(args.bar, args.months)
+    end_ts = parse_end_ts(args.end_date)
 
     print(f"Fetching ~{target_count} {args.bar} candles for {args.inst}" + (f" ending {args.end_date}" if args.end_date else "") + " ...")
     candles = fetch_historical_candles(args.inst, args.bar, target_count, end_ts)
