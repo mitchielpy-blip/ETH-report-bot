@@ -206,11 +206,7 @@ def breakdown(trades, key_fn, title):
     print("-" * len(header))
     for k in sorted(groups.keys(), key=str):
         ts = groups[k]
-        wins = [t for t in ts if t["outcome"] == "win"]
-        losses = [t for t in ts if t["outcome"] == "loss"]
-        decided = wins + losses
-        win_rate = len(wins) / len(decided) * 100 if decided else 0.0
-        avg_r = sum(t["net_r"] for t in ts) / len(ts)
+        win_rate, avg_r = bt.win_rate_and_avg_r(ts, r_key="net_r")
         total_r = sum(t["net_r"] for t in ts)
         flag = "  (!) tiny sample" if len(ts) < 8 else ""
         print(f"{str(k):<22} {len(ts):>4} {win_rate:>5.1f}% {avg_r:>+8.3f} {total_r:>+8.2f}{flag}")
@@ -243,13 +239,8 @@ def main():
         bot.PULLBACK_ATR_MULT = args.pullback
     print(f"Diagnosing {args.inst} @ PULLBACK_ATR_MULT={bot.PULLBACK_ATR_MULT}")
 
-    bars_per_month = {"1H": 24 * 30, "15m": 24 * 4 * 30, "4H": 6 * 30}
-    target_count = int(bars_per_month.get(args.bar, 24 * 30) * args.months) + bt.WARMUP_CANDLES
-
-    end_ts = None
-    if args.end_date:
-        end_dt = datetime.strptime(args.end_date, "%Y-%m-%d").replace(tzinfo=timezone.utc)
-        end_ts = int(end_dt.timestamp() * 1000)
+    target_count = bt.target_count_for(args.bar, args.months)
+    end_ts = bt.parse_end_ts(args.end_date)
 
     print(f"Fetching ~{target_count} {args.bar} candles for {args.inst}"
           + (f" ending {args.end_date}" if args.end_date else "") + " ...")

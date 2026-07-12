@@ -84,17 +84,13 @@ def main():
         })
 
     resolved = [r for r in results if r["outcome"] in ("win", "loss", "timeout")]
-    wins = [r for r in resolved if r["outcome"] == "win"]
-    losses = [r for r in resolved if r["outcome"] == "loss"]
     no_fills = [r for r in results if r["outcome"] == "no_fill"]
     invalidated = [r for r in results if r["outcome"] == "invalidated"]
 
     print(f"\nLogged signals checked: {len(signals)}  (still pending / too recent to know: {pending})")
     print(f"Resolved: {len(resolved)}   No-fill: {len(no_fills)}   Invalidated before fill: {len(invalidated)}")
     if resolved:
-        decided = wins + losses
-        win_rate = len(wins) / len(decided) * 100 if decided else 0.0
-        avg_r = sum(r["r_multiple"] for r in resolved) / len(resolved)
+        win_rate, avg_r = bt.win_rate_and_avg_r(resolved)
         print(f"Win rate (excl. timeouts): {win_rate:.1f}%")
         print(f"Average NET R-multiple per trade: {avg_r:+.2f}R")
         print("\nCompare this against your backtest's expectancy for the same period —")

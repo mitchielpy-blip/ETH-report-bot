@@ -77,6 +77,23 @@ VOLUME_LOW_RATIO = float(os.environ.get("VOLUME_LOW_RATIO", 0.7))          # bel
 PENDING_ENTRY_LIFETIME_HOURS = float(os.environ.get("PENDING_ENTRY_LIFETIME_HOURS", 8))
 
 
+def parse_candle_row(row):
+    """
+    Parse one OKX candle row into our candle dict. OKX returns
+    [ts, open, high, low, close, vol, volCcy, volCcyQuote, confirm];
+    we keep the OHLCV fields. Shared by the live fetch and the backtest's
+    history fetch so both read the API's rows identically.
+    """
+    return {
+        "ts": int(row[0]),
+        "open": float(row[1]),
+        "high": float(row[2]),
+        "low": float(row[3]),
+        "close": float(row[4]),
+        "vol": float(row[5]),
+    }
+
+
 def fetch_candles(inst_id=INST_ID, bar=BAR, limit=LOOKBACK):
     """
     Fetch completed candles from OKX, oldest -> newest.
@@ -114,18 +131,7 @@ def fetch_candles(inst_id=INST_ID, bar=BAR, limit=LOOKBACK):
     rows = [row for row in data["data"] if len(row) > 8 and row[8] == "1"]
     rows.reverse()  # oldest -> newest
     rows = rows[-limit:]
-    candles = [
-        {
-            "ts": int(row[0]),
-            "open": float(row[1]),
-            "high": float(row[2]),
-            "low": float(row[3]),
-            "close": float(row[4]),
-            "vol": float(row[5]),
-        }
-        for row in rows
-    ]
-    return candles
+    return [parse_candle_row(row) for row in rows]
 
 
 def ema(values, period):

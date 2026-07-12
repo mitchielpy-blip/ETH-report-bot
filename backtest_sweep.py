@@ -41,7 +41,6 @@ Reading the results:
 
 import argparse
 import csv
-from datetime import datetime, timezone
 
 import eth_report_bot as bot
 import backtest as bt
@@ -78,26 +77,14 @@ def run_one_sweep_value(candles, funding_events, pullback_mult):
             "second_half_avg_r": None,
         }
 
-    wins = [t for t in trades if t["outcome"] == "win"]
-    losses = [t for t in trades if t["outcome"] == "loss"]
-    decided = wins + losses
-    win_rate = (len(wins) / len(decided) * 100) if decided else 0.0
-    avg_r = sum(t["r_multiple"] for t in trades) / len(trades)
-
-    equity = [100.0]
-    for t in trades:
-        equity.append(equity[-1] * (1 + t["r_multiple"] * bt.RISK_PER_TRADE_PCT / 100))
-    peak, max_dd = equity[0], 0.0
-    for e in equity:
-        peak = max(peak, e)
-        max_dd = max(max_dd, (peak - e) / peak * 100)
+    win_rate, avg_r = bt.win_rate_and_avg_r(trades)
+    equity, max_dd = bt.equity_and_drawdown(trades)
 
     first_half_avg_r = second_half_avg_r = None
     if len(trades) >= 10:
         mid = len(trades) // 2
-        first_half, second_half = trades[:mid], trades[mid:]
-        first_half_avg_r = sum(t["r_multiple"] for t in first_half) / len(first_half)
-        second_half_avg_r = sum(t["r_multiple"] for t in second_half) / len(second_half)
+        first_half_avg_r = bt.win_rate_and_avg_r(trades[:mid])[1]
+        second_half_avg_r = bt.win_rate_and_avg_r(trades[mid:])[1]
 
     return {
         "pullback_atr_mult": pullback_mult,
@@ -164,13 +151,8 @@ def main():
 
     pullback_values = [float(v.strip()) for v in args.values.split(",")]
 
-    bars_per_month = {"1H": 24 * 30, "15m": 24 * 4 * 30, "4H": 6 * 30}
-    target_count = int(bars_per_month.get(args.bar, 24 * 30) * args.months) + bt.WARMUP_CANDLES
-
-    end_ts = None
-    if args.end_date:
-        end_dt = datetime.strptime(args.end_date, "%Y-%m-%d").replace(tzinfo=timezone.utc)
-        end_ts = int(end_dt.timestamp() * 1000)
+    target_count = bt.target_count_for(args.bar, args.months)
+    end_ts = bt.parse_end_ts(args.end_date)
 
     print(f"Fetching ~{target_count} {args.bar} candles for {args.inst}"
           + (f" ending {args.end_date}" if args.end_date else "") + " ...")
