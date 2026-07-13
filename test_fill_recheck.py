@@ -53,11 +53,13 @@ class FillReCheck(unittest.TestCase):
         self.assertIn("filled", posted[0].lower())
         self.assertTrue(saved.get("filled"))
 
-    def test_invalidated_setup_skips_post_and_discards_order(self):
+    def test_invalidated_setup_posts_notice_not_fill_and_discards_order(self):
         # by fill time the score has drifted back to neutral -> no direction
         now_neutral = {"direction": None, "reason": "score neutral", "raw_direction": None}
         posted, saved, _ = self._run(ticker_price=99.0, fresh_plan=now_neutral)
-        self.assertEqual(posted, [])                 # no fill alert for a dead setup
+        self.assertEqual(len(posted), 1)             # a heads-up, not silence
+        self.assertIn("invalidated", posted[0].lower())
+        self.assertNotIn("filled", posted[0].lower())  # NOT a fill alert
         self.assertIsNone(saved.get("direction"))    # pending order discarded
         self.assertNotEqual(saved.get("filled"), True)
 
@@ -65,7 +67,9 @@ class FillReCheck(unittest.TestCase):
         now_short = {"direction": "short", "entry": 100.0, "stop": 105.0,
                      "target": 90.0, "rr": 2.0, "raw_direction": "short"}
         posted, saved, _ = self._run(ticker_price=99.0, fresh_plan=now_short)
-        self.assertEqual(posted, [])
+        self.assertEqual(len(posted), 1)
+        self.assertIn("invalidated", posted[0].lower())
+        self.assertNotIn("filled", posted[0].lower())
         self.assertIsNone(saved.get("direction"))
 
     def test_recheck_passes_pending_direction_as_persistence(self):

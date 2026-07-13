@@ -10,9 +10,10 @@ lightweight current-price check instead of a full candle fetch.
 When the level IS touched, it re-validates the setup with the same shared
 plan logic before confirming the fill (bot.evaluate_plan) — mirroring the
 backtest, which discards a pullback whose thesis has decayed by the time it
-fills. A setup that has flipped or gone neutral is skipped and the pending
-order discarded, so the live bot doesn't take trades the backtest would have
-thrown away (which is what made the backtest look better than live).
+fills. A setup that has flipped or gone neutral is skipped, the pending order
+discarded, and a brief "setup invalidated" heads-up posted, so the live bot
+doesn't take trades the backtest would have thrown away (which is what made
+the backtest look better than live).
 
 Posts a quick "entry filled" alert to Discord the moment a still-valid fill
 happens, instead of waiting for the next hourly report to notice.
@@ -88,6 +89,13 @@ def main():
         print(f"{direction.upper()} entry at ${entry:,.2f} was touched, but the setup no "
               f"longer holds ({reason}) — skipping the fill and discarding the pending "
               f"order, matching the backtest's invalidation of stale pullbacks.")
+        bot.post_to_discord(
+            f"**Setup invalidated** · {direction.upper()} @ ${entry:,.2f} was touched, "
+            f"but the signal no longer holds ({reason}).\n"
+            f"Standing aside — no trade. _The pullback level from the last hourly report "
+            f"was reached, but the setup broke down before fill, so the bot is skipping it "
+            f"rather than entering a stale trade._"
+        )
         state["direction"] = None
         bot.save_state(state)
         return
