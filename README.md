@@ -13,6 +13,16 @@ Keep this section up to date whenever a real bug fix or parameter change
 goes live — it's the reference point for whether `forward_test_report.py`'s
 numbers are even measuring the strategy you think they are.
 
+> **Fill-time re-validation added 2026-07-12.** `fill_checker.py` now
+> re-checks the setup with the shared plan logic (`evaluate_plan`) the
+> moment a pending pullback entry is touched, and *skips* the fill if the
+> signal has flipped or decayed to neutral by then — exactly as the
+> backtest already discarded those "invalidated" pullbacks. Previously the
+> backtest threw these trades away but the live bot took them, so the
+> backtest's expectancy was optimistically biased. This changes which
+> fills go live, so treat pre-2026-07-12 fills as a slightly different
+> (more permissive) strategy when reading `forward_test_report.py`.
+>
 > **Restarted 2026-07-11.** Prior signals_log.csv archived as
 > `signals_log_pre_v2.csv` (not deleted — kept for reference, but excluded
 > from forward-test comparisons since it predates the fixes below).
@@ -38,6 +48,19 @@ numbers are even measuring the strategy you think they are.
 > Wait for a reasonable sample (15–20+ resolved trades) before drawing
 > conclusions from `forward_test_report.py` — same logic as the backtest's
 > own first-half/second-half split check.
+>
+> **Known ways the backtest can still flatter live** (so treat the baseline
+> as a ceiling, not a promise):
+> 1. *Fill granularity* — the backtest fills on any intra-bar wick to the
+>    entry, but `fill_checker.py` only samples the price every 15 minutes, so
+>    a quick spike to the level and back can fill in the backtest yet be
+>    missed live. The backtest's fill rate is therefore an over-estimate.
+> 2. *Stop/target slippage* — the backtest assumes stops and targets execute
+>    exactly at their price (it charges fees but no slippage). Real stops slip
+>    in fast moves, which mostly hurts losers, so net R is mildly optimistic.
+> 3. *In-sample tuning* — `PULLBACK_ATR_MULT=0.7` was tuned on the same window
+>    this baseline reports. Re-run with `--end-date` on an earlier, untouched
+>    window for a truer out-of-sample read before trusting it.
 
 ## What you get in the report
 - Current price (the last **completed** 1H candle's close — not the

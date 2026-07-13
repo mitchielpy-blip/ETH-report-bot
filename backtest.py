@@ -224,18 +224,14 @@ def evaluate_signal_at(candles, i, previous_raw_direction=None):
     if len(window) < WARMUP_CANDLES:
         return None
 
-    price = window[-1]["close"]
-    supports, resistances = bot.support_resistance(window)
-    atr_value = bot.atr(window)
-    adx_value = bot.adx(window)
-
-    # Score and HTF trend both come from the shared helpers in eth_report_bot
-    # so the backtest and the live bot can never score a candle differently.
-    score = bot.compute_bias_score(window)
+    # The whole plan derivation is delegated to the shared bot.evaluate_plan,
+    # so the backtest and the live bot can never derive a plan differently.
+    # The only backtest-specific input is the HTF trend, which we compute from
+    # resampled 1H bars (the live bot fetches real HTF candles instead) and
+    # pass in explicitly — that also guarantees the backtest never hits the
+    # network for HTF data.
     htf_trend = bot.htf_trend_from_closes([c["close"] for c in resample_htf(window)])
-
-    plan = bot.suggest_trade_plan(price, score, atr_value, supports, resistances, htf_trend, adx_value, previous_raw_direction)
-    return plan
+    return bot.evaluate_plan(window, previous_raw_direction, htf_trend=htf_trend)
 
 
 def simulate_trade(candles, signal_index, plan, funding_events=None):
