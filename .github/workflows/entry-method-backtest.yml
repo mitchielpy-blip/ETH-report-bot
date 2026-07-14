@@ -1,0 +1,49 @@
+name: Run Entry-Method Backtest
+
+on:
+  workflow_dispatch:
+    inputs:
+      inst:
+        description: "Instrument to test (e.g. ETH-USDT-SWAP, SOL-USDT-SWAP)"
+        required: false
+        default: "ETH-USDT-SWAP"
+      months:
+        description: "How many months of history to test"
+        required: false
+        default: "12"
+      bar:
+        description: "Candle timeframe (1H, 15m, 4H)"
+        required: false
+        default: "1H"
+      modes:
+        description: "Comma-separated entry modes to compare"
+        required: false
+        default: "pullback,market,breakout"
+      end_date:
+        description: "Optional: end date for the window, e.g. 2024-06-01 (leave blank for most recent data)"
+        required: false
+        default: ""
+
+jobs:
+  compare:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: pip install -r requirements.txt
+      - name: Run entry-method comparison
+        run: |
+          ARGS="--inst ${{ github.event.inputs.inst }} --months ${{ github.event.inputs.months }} --bar ${{ github.event.inputs.bar }} --modes ${{ github.event.inputs.modes }}"
+          if [ -n "${{ github.event.inputs.end_date }}" ]; then
+            ARGS="$ARGS --end-date ${{ github.event.inputs.end_date }}"
+          fi
+          python -u entry_method_backtest.py $ARGS
+        env:
+          OKX_PROXY: ${{ secrets.OKX_PROXY }}   # proxy OKX calls past the runner's geo-block
+      - name: Upload results
+        uses: actions/upload-artifact@v4
+        with:
+          name: entry-method-comparison
+          path: "entry_method_comparison.csv"

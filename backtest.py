@@ -234,6 +234,31 @@ def evaluate_signal_at(candles, i, previous_raw_direction=None):
     return bot.evaluate_plan(window, previous_raw_direction, htf_trend=htf_trend)
 
 
+def find_fill_index(candles, signal_index, direction, entry, wait=ENTRY_WAIT_CANDLES):
+    """
+    Index of the first candle within `wait` bars after the signal where price
+    touches `entry`, approaching from whichever side the entry sits on relative
+    to the signal close. A pullback entry sits against the signal (long below
+    price / short above) and is reached on a retrace; a breakout entry sits in
+    the signal's direction and is reached on continuation; a market entry sits
+    at the signal price and fills on the next bar. Comparing entry to the signal
+    close tells us which way price must move to reach it, so one scan models all
+    three ENTRY_MODEs. For the default pullback entry this is identical to the
+    original low<=entry (long) / high>=entry (short) test. Returns None if the
+    level is never touched inside the window.
+    """
+    signal_price = candles[signal_index]["close"]
+    for j in range(signal_index + 1, min(signal_index + 1 + wait, len(candles))):
+        c = candles[j]
+        if direction == "long":
+            touched = c["low"] <= entry if entry <= signal_price else c["high"] >= entry
+        else:
+            touched = c["high"] >= entry if entry >= signal_price else c["low"] <= entry
+        if touched:
+            return j
+    return None
+
+
 def simulate_trade(candles, signal_index, plan, funding_events=None):
     """
     Entry is a pullback level, not the current price, so it's treated as a
@@ -253,15 +278,7 @@ def simulate_trade(candles, signal_index, plan, funding_events=None):
     entry, stop, target = plan["entry"], plan["stop"], plan["target"]
     risk = abs(entry - stop)
 
-    fill_index = None
-    for j in range(signal_index + 1, min(signal_index + 1 + ENTRY_WAIT_CANDLES, len(candles))):
-        c = candles[j]
-        if direction == "long" and c["low"] <= entry:
-            fill_index = j
-            break
-        if direction == "short" and c["high"] >= entry:
-            fill_index = j
-            break
+    fill_index = find_fill_index(candles, signal_index, direction, entry)
 
     if fill_index is None:
         return "no_fill", 0.0, None, None, None

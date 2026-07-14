@@ -70,6 +70,15 @@ SHORT_SCORE_MAX = float(os.environ.get("SHORT_SCORE_MAX", 45))  # score <= this 
 ATR_SL_MULT = float(os.environ.get("ATR_SL_MULT", 1.5))         # stop distance = ATR * this
 MIN_RR = float(os.environ.get("MIN_RR", 1.5))                    # minimum reward:risk to publish a plan
 PULLBACK_ATR_MULT = float(os.environ.get("PULLBACK_ATR_MULT", 0.7))  # how deep a pullback entry to seek, in ATRs
+# How the entry level is placed relative to the current price:
+#   "pullback" (default, live) — wait for a shallow retrace against the signal,
+#   "market"                  — take it now at the current price,
+#   "breakout"                — enter only as price extends further in the
+#                               signal's direction (continuation).
+# Only "pullback" is wired into the live bot + fill_checker; "market"/"breakout"
+# exist so entry_method_backtest.py can compare them head-to-head before any is
+# considered for live use.
+ENTRY_MODE = os.environ.get("ENTRY_MODE", "pullback")
 # Updated from 1.0 -> 0.7 on the basis of backtest_sweep.py results (12mo, 1H):
 # 0.7 raised fill rate 11.1%->20.3%, win rate 45.5%->52.2%, and net expectancy
 # 0.145R->0.314R per trade vs the old 1.0 setting, with both half-window splits
@@ -384,6 +393,58 @@ def higher_timeframe_trend(bar=HTF_BAR):
     return htf_trend_from_closes([c["close"] for c in htf_candles])
 
 
+def build_entry_levels(direction, price, atr_value, supports, resistances):
+    """
+    Place the entry, stop and target for a proposed trade. ENTRY_MODE selects
+    how the entry sits relative to the current price:
+
+      * "pullback" (default) — wait for a shallow, ATR-scaled retrace against
+        the signal (long below price, short above), floored/capped at the
+        nearest structural level. Better fill, but the move can leave without
+        you.
+      * "market" — take the signal now, at the current price.
+      * "breakout" — enter only as price extends further in the signal's
+        direction (long above price, short below): continuation, not retrace.
+
+    Stop is always ATR_SL_MULT ATRs beyond the entry. Target is the nearest
+    structural level in front of the entry, or an ATR-projected level giving
+    MIN_RR when there's no structure to aim at. The pullback arm is unchanged
+    from the original inline logic (the 19/75/5 and backtest characterizations
+    pin that), so live behaviour is byte-identical while ENTRY_MODE=pullback.
+    """
+    if direction == "long":
+        nearest_support = max([s for s in supports if s < price], default=None)
+        nearest_resistance = min([r for r in resistances if r > price], default=None)
+        if ENTRY_MODE == "market":
+            entry = price
+            target = nearest_resistance if nearest_resistance else entry + atr_value * ATR_SL_MULT * MIN_RR
+        elif ENTRY_MODE == "breakout":
+            entry = price + atr_value * PULLBACK_ATR_MULT
+            res_above = min([r for r in resistances if r > entry], default=None)
+            target = res_above if res_above else entry + atr_value * ATR_SL_MULT * MIN_RR
+        else:  # pullback
+            atr_pullback_entry = price - atr_value * PULLBACK_ATR_MULT
+            entry = max(atr_pullback_entry, nearest_support) if nearest_support else atr_pullback_entry
+            target = nearest_resistance if nearest_resistance else entry + atr_value * ATR_SL_MULT * MIN_RR
+        stop = entry - atr_value * ATR_SL_MULT
+    else:  # short
+        nearest_resistance = min([r for r in resistances if r > price], default=None)
+        nearest_support = max([s for s in supports if s < price], default=None)
+        if ENTRY_MODE == "market":
+            entry = price
+            target = nearest_support if nearest_support else entry - atr_value * ATR_SL_MULT * MIN_RR
+        elif ENTRY_MODE == "breakout":
+            entry = price - atr_value * PULLBACK_ATR_MULT
+            sup_below = max([s for s in supports if s < entry], default=None)
+            target = sup_below if sup_below else entry - atr_value * ATR_SL_MULT * MIN_RR
+        else:  # pullback
+            atr_pullback_entry = price + atr_value * PULLBACK_ATR_MULT
+            entry = min(atr_pullback_entry, nearest_resistance) if nearest_resistance else atr_pullback_entry
+            target = nearest_support if nearest_support else entry - atr_value * ATR_SL_MULT * MIN_RR
+        stop = entry + atr_value * ATR_SL_MULT
+    return entry, stop, target
+
+
 def suggest_trade_plan(price, score, atr_value, supports, resistances, htf_trend=None, adx_value=None, previous_raw_direction=None):
     """
     Rule-based entry/SL/TP suggestion. Returns a dict, or None if no setup
@@ -420,25 +481,11 @@ def suggest_trade_plan(price, score, atr_value, supports, resistances, htf_trend
     if htf_trend == "bullish" and direction == "short":
         return {"direction": None, "reason": f"{HTF_BAR} trend is bullish — skipping short to avoid fighting the higher timeframe.", "raw_direction": raw_direction}
 
+    entry, stop, target = build_entry_levels(direction, price, atr_value, supports, resistances)
     if direction == "long":
-        nearest_support = max([s for s in supports if s < price], default=None)
-        nearest_resistance = min([r for r in resistances if r > price], default=None)
-        # Seek a shallow, volatility-scaled pullback rather than jumping
-        # straight to a potentially-distant structural support — a closer
-        # entry fills faster and is less likely to be stale by fill time.
-        atr_pullback_entry = price - atr_value * PULLBACK_ATR_MULT
-        entry = max(atr_pullback_entry, nearest_support) if nearest_support else atr_pullback_entry
-        stop = entry - atr_value * ATR_SL_MULT
-        target = nearest_resistance if nearest_resistance else entry + atr_value * ATR_SL_MULT * MIN_RR
         risk = entry - stop
         reward = target - entry
     else:  # short
-        nearest_resistance = min([r for r in resistances if r > price], default=None)
-        nearest_support = max([s for s in supports if s < price], default=None)
-        atr_pullback_entry = price + atr_value * PULLBACK_ATR_MULT
-        entry = min(atr_pullback_entry, nearest_resistance) if nearest_resistance else atr_pullback_entry
-        stop = entry + atr_value * ATR_SL_MULT
-        target = nearest_support if nearest_support else entry - atr_value * ATR_SL_MULT * MIN_RR
         risk = stop - entry
         reward = entry - target
 
