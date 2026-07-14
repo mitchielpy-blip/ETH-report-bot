@@ -79,6 +79,27 @@ ADX_MIN = float(os.environ.get("ADX_MIN", 20))                        # skip tra
 VOLUME_CONFIRM_RATIO = float(os.environ.get("VOLUME_CONFIRM_RATIO", 1.2))  # above-average volume amplifies conviction
 VOLUME_LOW_RATIO = float(os.environ.get("VOLUME_LOW_RATIO", 0.7))          # below-average volume dampens conviction
 
+# Which bias-score model compute_bias_score uses.
+#   "momentum" (default) — the original three-momentum-reads score, live
+#                          behaviour unchanged.
+#   "regime"             — regime-aware score that blends trend-following
+#                          momentum with mean-reversion by how trending the
+#                          market is (see _score_regime). OFF by default;
+#                          12-month calibration showed the momentum-only score
+#                          carries ~no directional edge at 6-24h horizons, so
+#                          this is validated via score_calibration.py
+#                          --score-mode regime before it's ever switched on.
+SCORE_MODE = os.environ.get("SCORE_MODE", "momentum")
+# Regime blend (only used when SCORE_MODE == "regime"). ADX at/below LOW is
+# treated as a pure range (lean on mean-reversion); at/above HIGH as a pure
+# trend (lean on momentum); linear in between.
+REGIME_ADX_LOW = float(os.environ.get("REGIME_ADX_LOW", 15))
+REGIME_ADX_HIGH = float(os.environ.get("REGIME_ADX_HIGH", 30))
+# How many ATRs of price stretch from the EMA anchor counts as "fully
+# extended" for the mean-reversion component (a 2-ATR stretch fades all the
+# way to the short/long extreme).
+MR_STRETCH_ATR = float(os.environ.get("MR_STRETCH_ATR", 2.0))
+
 # How long a pending (unfilled) pullback entry stays live before being
 # discarded. Keep this equal to the backtest's ENTRY_WAIT_CANDLES (in
 # hours, for 1H bars) and fill_checker's PENDING_ORDER_EXPIRY_HOURS so
@@ -322,16 +343,33 @@ def support_resistance(candles, lookback=40, n_levels=3):
     return supports, resistances
 
 
-def compute_bias_score(candles):
-    """
-    Heuristic 0-100 bias score (clamped to 5-95) from completed candles.
+def _clamp(x, lo=-1.0, hi=1.0):
+    return max(lo, min(hi, x))
 
-    Pure and network-free, keyed only on the candle series — the single
-    source of truth for the score, shared by the live report
-    (build_report) and the backtest (evaluate_signal_at) so both score
-    every candle identically. This is the same reason ema_last is shared:
-    the moment the two paths score differently, the backtest silently
-    stops describing the live bot. NOT a validated win-rate model.
+
+def _apply_volume_scaling(score, candles):
+    """Volume confirmation: above-average participation amplifies whatever
+    direction the score already leans toward; below-average volume dampens it
+    back toward neutral (low participation = noise). Shared by both score
+    models so they treat volume identically."""
+    vol_ratio = volume_ratio(candles)
+    if vol_ratio is not None:
+        deviation = score - 50
+        if vol_ratio >= VOLUME_CONFIRM_RATIO:
+            deviation *= 1.15
+        elif vol_ratio <= VOLUME_LOW_RATIO:
+            deviation *= 0.7
+        score = 50 + deviation
+    return score
+
+
+def _score_momentum(candles):
+    """
+    The original momentum bias score: three momentum reads of the same
+    closes (RSI, EMA20-vs-EMA50, MACD histogram sign), volume-scaled and
+    clamped to 5-95. This is what SCORE_MODE="momentum" (the default) uses,
+    so live behaviour is unchanged. NOT a validated win-rate model — 12-month
+    calibration found it carries ~no directional edge at 6-24h horizons.
     """
     closes = [c["close"] for c in candles]
     r = rsi(closes)
@@ -345,19 +383,91 @@ def compute_bias_score(candles):
     score += 15 if ema20 > ema50 else -15
     score += 10 if hist > 0 else -10
 
-    # Volume confirmation: above-average participation amplifies whatever
-    # direction the other indicators already lean toward; below-average
-    # volume dampens it back toward neutral (low participation = noise).
-    vol_ratio = volume_ratio(candles)
-    if vol_ratio is not None:
-        deviation = score - 50
-        if vol_ratio >= VOLUME_CONFIRM_RATIO:
-            deviation *= 1.15
-        elif vol_ratio <= VOLUME_LOW_RATIO:
-            deviation *= 0.7
-        score = 50 + deviation
-
+    score = _apply_volume_scaling(score, candles)
     return max(5, min(95, round(score)))
+
+
+def _score_regime(candles):
+    """
+    Regime-aware bias score (SCORE_MODE="regime").
+
+    The momentum-only score was measured against 12 months of forward returns
+    (score_calibration.py) and found to carry essentially no directional
+    information at 6-24h horizons — mildly *inverted*, because three momentum
+    reads of the same closes fire hardest right at the short-horizon
+    exhaustion that precedes a pullback. This score fixes what it measures
+    rather than filtering the old output. It blends:
+
+      - a trend-following momentum sub-signal `m` in [-1, 1] (the same three
+        reads, normalised to the momentum score's relative weights), and
+      - a mean-reversion sub-signal `mr` in [-1, 1] that fades price stretched
+        from its EMA anchor (in ATR units) and fades RSI extremes,
+
+    weighted by how trending the market is right now: ADX near/below
+    REGIME_ADX_LOW -> range -> lean on mean-reversion; ADX near/above
+    REGIME_ADX_HIGH -> trend -> lean on momentum; linear in between. Same 5-95
+    clamp and volume scaling as the momentum score, so the live thresholds and
+    the rest of the pipeline are untouched.
+    """
+    closes = [c["close"] for c in candles]
+    r = rsi(closes)
+    _, _, hist = macd(closes)
+    ema20 = ema_last(closes, 20)
+    ema50 = ema_last(closes, 50)
+    atr_value = atr(candles)
+    price = closes[-1]
+
+    rsi_dev = 0.0 if r is None else _clamp((r - 50) / 50.0)  # [-1, 1]
+
+    # Trend-following momentum: the three reads, normalised to [-1, 1] with the
+    # momentum score's relative weights (RSI ~0.44, EMA ~0.33, MACD ~0.22).
+    m = _clamp(
+        0.44 * rsi_dev
+        + 0.33 * (1 if ema20 > ema50 else -1)
+        + 0.22 * (1 if hist > 0 else -1)
+    )
+
+    # Mean-reversion: fade how far price has stretched from its EMA anchor (in
+    # ATR units) and fade RSI extremes. Positive stretch = extended above the
+    # anchor -> short lean (negative mr).
+    stretch = (price - ema20) / atr_value if atr_value else 0.0
+    mr_stretch = _clamp(-stretch / MR_STRETCH_ATR) if MR_STRETCH_ATR else 0.0
+    mr = _clamp(0.6 * mr_stretch + 0.4 * (-rsi_dev))
+
+    # Trendiness in [0, 1] from ADX. Missing ADX (early bars) -> neutral 0.5.
+    a = adx(candles)
+    span = REGIME_ADX_HIGH - REGIME_ADX_LOW
+    if a is None or span <= 0:
+        t = 0.5
+    else:
+        t = _clamp((a - REGIME_ADX_LOW) / span, 0.0, 1.0)
+
+    signal = t * m + (1 - t) * mr  # [-1, 1]
+    score = 50 + signal * 45.0
+
+    score = _apply_volume_scaling(score, candles)
+    return max(5, min(95, round(score)))
+
+
+def compute_bias_score(candles):
+    """
+    Heuristic 0-100 bias score (clamped to 5-95) from completed candles.
+
+    Pure and network-free, keyed only on the candle series — the single
+    source of truth for the score, shared by the live report (build_report)
+    and the backtest (evaluate_signal_at) so both score every candle
+    identically. This is the same reason ema_last is shared: the moment the
+    two paths score differently, the backtest silently stops describing the
+    live bot.
+
+    Dispatches on SCORE_MODE so the model can be swapped (and calibrated)
+    without changing any caller. Default "momentum" keeps live behaviour
+    unchanged; "regime" selects the regime-aware model. NOT a validated
+    win-rate model.
+    """
+    if SCORE_MODE == "regime":
+        return _score_regime(candles)
+    return _score_momentum(candles)
 
 
 def htf_trend_from_closes(closes):

@@ -19,6 +19,10 @@ on:
         description: "Comma-separated forward horizons in bars (e.g. 6,12,24)"
         required: false
         default: "6,12,24"
+      score_mode:
+        description: "Which bias-score model to calibrate (momentum or regime)"
+        required: false
+        default: "momentum"
       end_date:
         description: "Optional: end date for the window, e.g. 2024-06-01 (leave blank for most recent data)"
         required: false
@@ -35,7 +39,7 @@ jobs:
       - run: pip install -r requirements.txt
       - name: Run score calibration
         run: |
-          ARGS="--inst ${{ github.event.inputs.inst }} --months ${{ github.event.inputs.months }} --bar ${{ github.event.inputs.bar }} --horizons ${{ github.event.inputs.horizons }}"
+          ARGS="--inst ${{ github.event.inputs.inst }} --months ${{ github.event.inputs.months }} --bar ${{ github.event.inputs.bar }} --horizons ${{ github.event.inputs.horizons }} --score-mode ${{ github.event.inputs.score_mode }}"
           if [ -n "${{ github.event.inputs.end_date }}" ]; then
             ARGS="$ARGS --end-date ${{ github.event.inputs.end_date }}"
           fi
