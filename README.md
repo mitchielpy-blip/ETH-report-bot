@@ -195,9 +195,11 @@ terminal instead of posting — useful for testing changes.
 # Full backtest against the current live logic
 python backtest.py --months 12
 
-# Compare pullback-entry depth options (or any other parameter you
-# want to sweep — edit backtest_sweep.py's target env var if needed)
+# Compare pullback-entry depth options
 python backtest_sweep.py --months 12 --values 1.0,0.7,0.5,0.3
+
+# ...or sweep any other strategy threshold, e.g. the reward:risk gate
+python backtest_sweep.py --months 12 --param MIN_RR --values 1.5,1.4,1.3,1.2
 
 # After enough live signals have accumulated and resolved:
 python forward_test_report.py
