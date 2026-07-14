@@ -240,15 +240,7 @@ def main():
                          help="Pull data ending at this date instead of now, e.g. 2024-06-01.")
     parser.add_argument("--horizons", default="6,12,24",
                          help="Comma-separated forward horizons in bars (default 6,12,24).")
-    parser.add_argument("--score-mode", default=None,
-                         help="Which bias-score model to calibrate: 'momentum' (live "
-                              "default) or 'regime'. Leave unset to use the current "
-                              "bot.SCORE_MODE. Patches the module global for this run "
-                              "only, exactly as an env var would set it live.")
     args = parser.parse_args()
-
-    if args.score_mode is not None:
-        bot.SCORE_MODE = args.score_mode
 
     horizons = [int(h.strip()) for h in args.horizons.split(",")]
 
@@ -259,8 +251,7 @@ def main():
           + (f" ending {args.end_date}" if args.end_date else "") + " ...")
     candles = bt.fetch_historical_candles(args.inst, args.bar, target_count, end_ts)
     print(f"Got {len(candles)} candles.")
-    print(f"Calibrating the '{bot.SCORE_MODE}' bias score against forward returns over "
-          f"horizons {horizons} "
+    print(f"Calibrating the bias score against forward returns over horizons {horizons} "
           f"(LONG_SCORE_MIN={bot.LONG_SCORE_MIN:.0f}, SHORT_SCORE_MAX={bot.SHORT_SCORE_MAX:.0f}) ...")
 
     all_rows = []
