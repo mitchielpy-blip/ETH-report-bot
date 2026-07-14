@@ -1,4 +1,4 @@
-name: ETH Hourly Report
+name: Hourly Report (ETH + SOL)
 
 on:
   schedule:
@@ -6,7 +6,7 @@ on:
   workflow_dispatch: {}     # also allows manual triggers from GitHub or an external service
 
 permissions:
-  contents: write   # needed so the workflow can commit state.json back
+  contents: write   # needed so the workflow can commit state/log files back
 
 jobs:
   post-report:
@@ -17,15 +17,26 @@ jobs:
         with:
           python-version: "3.12"
       - run: pip install -r requirements.txt
-      - run: python eth_report_bot.py
+      - name: ETH report
+        run: python eth_report_bot.py
         env:
           DISCORD_WEBHOOK_URL: ${{ secrets.DISCORD_WEBHOOK_URL }}
           OKX_PROXY: ${{ secrets.OKX_PROXY }}   # proxy OKX calls past the runner's geo-block
+      - name: SOL report
+        if: always()   # a transient ETH failure shouldn't silence the SOL report
+        run: python eth_report_bot.py
+        env:
+          INST_ID: SOL-USDT-SWAP
+          STATE_FILE: state_sol.json
+          SIGNALS_LOG_FILE: signals_log_sol.csv
+          DISCORD_WEBHOOK_URL: ${{ secrets.DISCORD_WEBHOOK_URL }}
+          OKX_PROXY: ${{ secrets.OKX_PROXY }}
       - name: Save signal state and log
+        if: always()
         run: |
           git config user.name "eth-report-bot"
           git config user.email "actions@github.com"
-          git add state.json signals_log.csv
+          git add state*.json signals_log*.csv
           if git diff --staged --quiet; then
             echo "No changes to commit."
             exit 0
