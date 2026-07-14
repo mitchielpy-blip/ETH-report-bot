@@ -1,4 +1,4 @@
-name: Run Pullback Sweep
+name: Run Parameter Sweep
 
 on:
   workflow_dispatch:
@@ -19,8 +19,12 @@ on:
         description: "Optional: end date for the window, e.g. 2024-06-01 (leave blank for most recent data)"
         required: false
         default: ""
+      param:
+        description: "Which strategy threshold to sweep (PULLBACK_ATR_MULT, MIN_RR, ADX_MIN, ATR_SL_MULT, LONG_SCORE_MIN, SHORT_SCORE_MAX)"
+        required: false
+        default: "PULLBACK_ATR_MULT"
       values:
-        description: "Comma-separated PULLBACK_ATR_MULT values to test"
+        description: "Comma-separated values to test for that param"
         required: false
         default: "1.0,0.7,0.5,0.3"
       adx_min:
@@ -37,9 +41,9 @@ jobs:
         with:
           python-version: "3.12"
       - run: pip install -r requirements.txt
-      - name: Run pullback sweep
+      - name: Run parameter sweep
         run: |
-          ARGS="--inst ${{ github.event.inputs.inst }} --months ${{ github.event.inputs.months }} --bar ${{ github.event.inputs.bar }} --values ${{ github.event.inputs.values }}"
+          ARGS="--inst ${{ github.event.inputs.inst }} --months ${{ github.event.inputs.months }} --bar ${{ github.event.inputs.bar }} --param ${{ github.event.inputs.param }} --values ${{ github.event.inputs.values }}"
           if [ -n "${{ github.event.inputs.end_date }}" ]; then
             ARGS="$ARGS --end-date ${{ github.event.inputs.end_date }}"
           fi
@@ -50,5 +54,5 @@ jobs:
       - name: Upload results
         uses: actions/upload-artifact@v4
         with:
-          name: pullback-sweep-results
-          path: pullback_sweep.csv
+          name: sweep-results
+          path: "*_sweep.csv"

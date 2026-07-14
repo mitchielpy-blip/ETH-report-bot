@@ -13,6 +13,28 @@ Keep this section up to date whenever a real bug fix or parameter change
 goes live — it's the reference point for whether `forward_test_report.py`'s
 numbers are even measuring the strategy you think they are.
 
+> **SOL added + short gate loosened 2026-07-14.** Two changes, both
+> validated on 12-month 1H backtests before going live:
+> 1. **SOL-USDT-SWAP now runs as a second instrument** alongside ETH (same
+>    strategy, own `state_sol.json` / `signals_log_sol.csv`). SOL's
+>    12-month baseline: 40 trades, 56.4% win rate, +0.371R/trade net,
+>    3.3% max drawdown, both half-window splits positive (+0.23R/+0.51R).
+>    BTC was tested at the same time and REJECTED: +0.216R overall but all
+>    of it from one half of the year (−0.23R / +0.67R splits).
+> 2. **`SHORT_SCORE_MAX` 38 → 45** via the parameter sweep: 51 trades
+>    (vs 46), +0.330R/trade (vs +0.314R), identical 5.0% max drawdown, and
+>    perfectly consistent halves (+0.330R/+0.330R). Loosening the long gate
+>    (`LONG_SCORE_MIN`) was tested too and made things worse — left at 62.
+>    Note this is in-sample; treat the gain as noise-level and the change
+>    as "not harmful, slightly more active".
+>
+> **New ETH baseline to compare live results against:** 51 trades/12mo,
+> 52.9% win rate, +0.330R net expectancy. Combined with SOL that's ~90
+> fills/year — roughly one filled trade every 4 days across the two
+> instruments (they're correlated, so expect losing streaks to overlap).
+> Prior `signals_log.csv` archived as `signals_log_pre_v3.csv`, since the
+> short-gate change alters which ETH signals publish.
+>
 > **Fill-time re-validation added 2026-07-12.** `fill_checker.py` now
 > re-checks the setup with the shared plan logic (`evaluate_plan`) the
 > moment a pending pullback entry is touched, and *skips* the fill if the
@@ -195,9 +217,11 @@ terminal instead of posting — useful for testing changes.
 # Full backtest against the current live logic
 python backtest.py --months 12
 
-# Compare pullback-entry depth options (or any other parameter you
-# want to sweep — edit backtest_sweep.py's target env var if needed)
+# Compare pullback-entry depth options
 python backtest_sweep.py --months 12 --values 1.0,0.7,0.5,0.3
+
+# ...or sweep any other strategy threshold, e.g. the reward:risk gate
+python backtest_sweep.py --months 12 --param MIN_RR --values 1.5,1.4,1.3,1.2
 
 # After enough live signals have accumulated and resolved:
 python forward_test_report.py

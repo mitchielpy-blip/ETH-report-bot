@@ -1,4 +1,4 @@
-name: ETH Fill Checker
+name: Fill Checker (ETH + SOL)
 
 on:
   schedule:
@@ -6,7 +6,7 @@ on:
   workflow_dispatch: {}
 
 permissions:
-  contents: write   # needed so the workflow can commit state.json back
+  contents: write   # needed so the workflow can commit state files back
 
 jobs:
   check-fill:
@@ -17,15 +17,25 @@ jobs:
         with:
           python-version: "3.12"
       - run: pip install -r requirements.txt
-      - run: python fill_checker.py
+      - name: ETH fill check
+        run: python fill_checker.py
         env:
           DISCORD_WEBHOOK_URL: ${{ secrets.DISCORD_WEBHOOK_URL }}
           OKX_PROXY: ${{ secrets.OKX_PROXY }}   # proxy OKX calls past the runner's geo-block
+      - name: SOL fill check
+        if: always()   # a transient ETH failure shouldn't stop the SOL check
+        run: python fill_checker.py
+        env:
+          INST_ID: SOL-USDT-SWAP
+          STATE_FILE: state_sol.json
+          DISCORD_WEBHOOK_URL: ${{ secrets.DISCORD_WEBHOOK_URL }}
+          OKX_PROXY: ${{ secrets.OKX_PROXY }}
       - name: Save signal state
+        if: always()
         run: |
           git config user.name "eth-report-bot"
           git config user.email "actions@github.com"
-          git add state.json
+          git add state*.json
           if git diff --staged --quiet; then
             echo "No changes to commit."
             exit 0
