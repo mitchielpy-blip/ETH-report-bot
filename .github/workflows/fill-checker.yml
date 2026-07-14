@@ -2,7 +2,7 @@ name: Fill Checker (ETH + SOL)
 
 on:
   schedule:
-    - cron: "3,18,33,48 * * * *"   # every 15 min, offset from :00/:15/:30/:45
+    - cron: "*/5 * * * *"   # every 5 min; :00-:55 never hits the hourly report at :07
   workflow_dispatch: {}
 
 permissions:
