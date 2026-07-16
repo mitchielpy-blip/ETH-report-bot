@@ -136,6 +136,75 @@ so changes can be checked against history before going live — but no
 amount of backtesting guarantees future performance. Treat every
 parameter as provisional, not settled.
 
+## Choosing a strategy (`STRATEGY` env var)
+
+The bot ships with two independent strategies. Pick one with the `STRATEGY`
+environment variable — everything else (report format, Discord posting,
+`state.json`, `signals_log.csv`, `fill_checker.py`, `backtest.py`) works the
+same either way.
+
+- **`STRATEGY=indicator`** (default) — the indicator bias-score model described
+  above (RSI/MACD/EMA/ADX/volume on 1H + a 4H EMA trend filter). This is the
+  forward-tested one (see the log at the top of this file).
+- **`STRATEGY=price_action`** — a 4-timeframe structure/zone/rejection model
+  (implemented in `price_action.py`), a mechanical version of a discretionary
+  price-action checklist. **Not yet validated — backtest it before relying on
+  it.**
+
+### The price-action strategy (4 questions before an entry)
+
+1. **Trend — 4H.** Swing structure: higher-highs *and* higher-lows → longs
+   only; lower-highs *and* lower-lows → shorts only; anything else (ranging) →
+   stand aside.
+2. **Zone — 1H.** The last swing point price left *aggressively* — an impulse
+   of at least `PA_IMPULSE_ATR_MULT` × ATR within `PA_IMPULSE_MAX_BARS` bars.
+   That candle's range is the reversal ("where big money entered") zone.
+3. **Reaction — 15M.** Wait for price to tag the zone and *reject* it (a wick
+   into the zone making up ≥ `PA_REJECTION_WICK_RATIO` of the candle, closing
+   back out). No reaction = no trade.
+4. **Confirmation — 5M.** Wait for a break of the opposite side's structure —
+   for a long, a 5M *close* above the last lower-high; for a short, a close
+   below the last higher-low.
+
+Only when all four align is a plan produced: **entry** at the broken structure
+level (a retest, so it fits the same pending-order fill model as the indicator
+strategy), **stop** just beyond the zone (`PA_ZONE_STOP_ATR_MULT` × 5M ATR
+buffer), **target** the next opposing 1H swing, gated by the same `MIN_RR`.
+
+The discretionary language above is turned into these tunables (all env vars,
+all sweepable like `PULLBACK_ATR_MULT`):
+
+| Env var | Default | Meaning |
+|---|---|---|
+| `PA_SWING_LEFT` / `PA_SWING_RIGHT` | 2 / 2 | pivot bars each side for swing detection |
+| `PA_IMPULSE_ATR_MULT` | 2.0 | how far price must leave the zone (in 1H ATRs) to count as "aggressive" |
+| `PA_IMPULSE_MAX_BARS` | 5 | …within this many 1H bars |
+| `PA_REJECTION_LOOKBACK` | 8 | 15M bars to look back for a rejection |
+| `PA_REJECTION_WICK_RATIO` | 0.5 | min wick share of the rejection candle |
+| `PA_ZONE_STOP_ATR_MULT` | 0.5 | stop buffer beyond the zone, in 5M ATRs |
+| `PA_BOS_LEFT` / `PA_BOS_RIGHT` | 1 / 1 | pivot bars each side for the 5M break-of-structure check |
+
+Because the 5M break-of-structure trigger is time-sensitive, the price-action
+strategy runs on its **own workflow** (`.github/workflows/price-action.yml`,
+every 15 minutes) with its own `state_pa*.json` / `signals_log_pa*.csv` files,
+so it never clobbers the hourly indicator strategy's state.
+
+### Backtesting the price-action strategy
+
+`backtest.py` reads the same `STRATEGY` env var. For `price_action` it fetches a
+single **5M** history feed and resamples it up to 15m/1H/4H (mirroring how the
+live bot fetches those four timeframes), then walks forward 5M-bar-by-5M-bar
+with no lookahead:
+
+```bash
+STRATEGY=price_action python backtest.py --months 6      # base bar is fixed at 5m
+```
+
+It prints the same summary (win rate / expectancy / drawdown / first-vs-second-
+half split) and `trades.csv` as the indicator backtest. Tune the 5M fill/hold
+windows with `PA_ENTRY_WAIT_BARS` (default 24 = ~2h) and `PA_MAX_HOLD_BARS`
+(default 288 = ~24h).
+
 ## Setup (free, runs on GitHub — no server needed)
 
 1. **Create a Discord webhook**
@@ -144,12 +213,14 @@ parameter as provisional, not settled.
 
 2. **Create a new GitHub repo** (private is fine) and upload these files:
    - `eth_report_bot.py`
+   - `price_action.py` (the `STRATEGY=price_action` strategy core)
    - `backtest.py`
    - `fill_checker.py`
    - `forward_test_report.py`
    - `backtest_sweep.py` (optional — only needed if re-tuning parameters)
    - `requirements.txt`
    - `.github/workflows/eth-report.yml`
+   - `.github/workflows/price-action.yml` (optional — only if running `STRATEGY=price_action`)
    - `.github/workflows/fill-checker.yml`
    - `.github/workflows/backtest.yml`
    - `.github/workflows/pullback-sweep.yml` (optional, pairs with the sweep script)

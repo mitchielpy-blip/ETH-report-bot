@@ -78,7 +78,13 @@ def main():
     # to the backtest than filling blindly. We pass the pending direction as
     # previous_raw_direction so the re-check only asks "has the raw signal
     # flipped?", not "re-confirm over two fresh hours" — matching the backtest.
-    fresh = bot.evaluate_plan(bot.fetch_candles(), previous_raw_direction=direction)
+    if bot.STRATEGY == "price_action":
+        # evaluate_plan ignores the first arg for price_action and fetches the
+        # four-timeframe bundle itself; no previous_state so the setup is
+        # re-derived fresh (the fill-time re-check, not a dedupe).
+        fresh = bot.evaluate_plan(None)
+    else:
+        fresh = bot.evaluate_plan(bot.fetch_candles(), previous_raw_direction=direction)
     if not fresh or fresh.get("direction") != direction:
         if not fresh:
             reason = "insufficient data to re-evaluate"

@@ -32,6 +32,7 @@ CHANGELOG (audit fixes):
 """
 
 import argparse
+import bisect
 import csv
 import os
 import time
@@ -62,7 +63,20 @@ HTF_GROUP_MS = HTF_GROUP_HOURS * 3600 * 1000
 # Approximate candles per month per bar size, used to translate a --months
 # argument into a fetch count. Shared by backtest.py, backtest_sweep.py and
 # diagnostics.py so they all size their windows identically.
-BARS_PER_MONTH = {"1H": 24 * 30, "15m": 24 * 4 * 30, "4H": 6 * 30}
+BARS_PER_MONTH = {"1H": 24 * 30, "15m": 24 * 4 * 30, "4H": 6 * 30, "5m": 12 * 24 * 30}
+
+# --- Price-action backtest (STRATEGY=price_action) --------------------------
+# The whole strategy is driven from ONE 5M history feed, resampled up to
+# 15m/1H/4H (mirroring how the live bot fetches those four timeframes). Bar
+# sizes in ms and the base feed size:
+PA_BASE_MS = 5 * 60 * 1000
+PA_TF_MS = {"15m": 15 * 60 * 1000, "1H": 60 * 60 * 1000, "4H": 4 * 60 * 60 * 1000}
+# As-of window sizes handed to the evaluator per timeframe — kept equal to the
+# live fetch_timeframes() limits so the backtest sees exactly what live sees.
+PA_LIMITS = {"5m": 200, "15m": 120, "1H": 120, "4H": 120}
+PA_WARMUP_5M = int(os.environ.get("PA_WARMUP_5M", 1000))     # 5M bars before the first signal (~20 4H bars)
+PA_ENTRY_WAIT_5M = int(os.environ.get("PA_ENTRY_WAIT_BARS", 24))  # 5M bars to retest the broken level (~2h)
+PA_MAX_HOLD_5M = int(os.environ.get("PA_MAX_HOLD_BARS", 288))     # 5M bars a filled trade may run (~24h)
 
 
 def target_count_for(bar, months):
@@ -173,32 +187,28 @@ def compute_trade_costs(direction, entry, risk, fill_ts, exit_ts, funding_events
     return fee_r, funding_r
 
 
-def resample_htf(candles_1h, group_ms=HTF_GROUP_MS):
+def resample_indexed(candles, group_ms, base_ms):
     """
-    Aggregate 1H candles into HTF candles anchored to real HTF boundaries
-    (audit fix). Each 1H candle is assigned to the bucket
-    ts - (ts % group_ms), which matches how OKX's own 4H candles are
-    aligned. The trailing bucket is dropped unless it contains a full
-    group of 1H candles, so — like the live bot after its confirmed-
-    candle fix — only *completed* HTF bars feed the trend filter.
-    Uses only past data; no lookahead.
+    Aggregate `base_ms`-sized candles into `group_ms` candles anchored to real
+    boundaries (each base candle joins the bucket ts - (ts % group_ms), matching
+    how OKX aligns its own higher-timeframe candles). Returns a list of
+    (close_index, bar) for every *complete* bucket, where close_index is the
+    index in `candles` of the bucket's last base candle — so a caller can slice
+    "buckets fully closed as of base bar i" with no lookahead. A bucket is
+    complete only when it holds all group_ms // base_ms base candles, so a
+    still-forming bucket (or one straddling a data gap) is dropped, exactly as
+    the live bot only ever sees closed higher-timeframe bars.
     """
-    if not candles_1h:
+    if not candles:
         return []
-
     buckets = []
     current_key = None
-    for c in candles_1h:
+    for idx, c in enumerate(candles):
         key = c["ts"] - (c["ts"] % group_ms)
         if key != current_key:
             buckets.append({
-                "ts": key,
-                "open": c["open"],
-                "high": c["high"],
-                "low": c["low"],
-                "close": c["close"],
-                "vol": c["vol"],
-                "count": 1,
+                "ts": key, "open": c["open"], "high": c["high"], "low": c["low"],
+                "close": c["close"], "vol": c["vol"], "count": 1, "_ci": idx,
             })
             current_key = key
         else:
@@ -208,14 +218,28 @@ def resample_htf(candles_1h, group_ms=HTF_GROUP_MS):
             b["close"] = c["close"]
             b["vol"] += c["vol"]
             b["count"] += 1
+            b["_ci"] = idx
 
-    group = group_ms // (3600 * 1000)
-    # Drop the trailing (still-forming) bucket; keep a partial *first*
-    # bucket out too, since it also isn't a true full HTF candle.
-    complete = [b for b in buckets[:-1] if b["count"] == group]
-    if buckets and buckets[-1]["count"] == group:
-        complete.append(buckets[-1])
-    return [{k: b[k] for k in ("ts", "open", "high", "low", "close", "vol")} for b in complete]
+    group = group_ms // base_ms
+    out = []
+    for b in buckets:
+        if b["count"] == group:
+            bar = {k: b[k] for k in ("ts", "open", "high", "low", "close", "vol")}
+            out.append((b["_ci"], bar))
+    return out
+
+
+def resample(candles, group_ms, base_ms):
+    """Just the completed higher-timeframe bars (no indices) — the general form
+    of the old resample_htf, for any base/group size."""
+    return [bar for _ci, bar in resample_indexed(candles, group_ms, base_ms)]
+
+
+def resample_htf(candles_1h, group_ms=HTF_GROUP_MS):
+    """Aggregate 1H candles into HTF (default 4H) candles for the indicator
+    backtest — a thin wrapper over the general resampler with a 1H base, so the
+    indicator path is byte-for-byte unchanged."""
+    return resample(candles_1h, group_ms, 3600 * 1000)
 
 
 def evaluate_signal_at(candles, i, previous_raw_direction=None):
@@ -259,38 +283,40 @@ def find_fill_index(candles, signal_index, direction, entry, wait=ENTRY_WAIT_CAN
     return None
 
 
-def simulate_trade(candles, signal_index, plan, funding_events=None):
+def simulate_trade(candles, signal_index, plan, funding_events=None,
+                   revalidate=None, wait=ENTRY_WAIT_CANDLES, max_hold=MAX_HOLD_CANDLES):
     """
-    Entry is a pullback level, not the current price, so it's treated as a
-    pending limit order: we first wait for price to actually reach entry
-    (within ENTRY_WAIT_CANDLES) before any risk is considered "live".
-    If it never fills, the signal is discarded — not counted as a trade.
-    Once filled, walk forward until stop or target is hit, or
-    MAX_HOLD_CANDLES elapses (timeout, marked-to-market at last close).
+    Entry is a pullback/retest level, not the current price, so it's treated as
+    a pending limit order: we first wait for price to actually reach entry
+    (within `wait` bars) before any risk is considered "live". If it never
+    fills, the signal is discarded — not counted as a trade. Once filled, walk
+    forward until stop or target is hit, or `max_hold` elapses (timeout,
+    marked-to-market at last close).
 
-    Returns (outcome, net_r_multiple, exit_ts, cost_breakdown, fill_index)
-    where cost_breakdown = {"gross_r", "fee_r", "funding_r"} and fill_index
-    is the candle index the entry actually filled on (None if it never
-    filled) — so callers can report fill delay without re-scanning candles.
+    `revalidate(fill_index) -> plan_or_None` re-checks the thesis at fill time
+    (a pullback can take a while to get touched; if the setup has flipped by
+    then the original plan is stale). It defaults to the indicator re-check
+    (evaluate_signal_at, passing the original direction so the persistence gate
+    doesn't spuriously block); the price-action path passes its own multi-TF
+    re-check. `wait`/`max_hold` are in units of the base candle so the same
+    machinery serves the 1H indicator and the 5M price-action backtests.
+
+    Returns (outcome, net_r_multiple, exit_ts, cost_breakdown, fill_index).
     """
     funding_events = funding_events or []
     direction = plan["direction"]
     entry, stop, target = plan["entry"], plan["stop"], plan["target"]
     risk = abs(entry - stop)
 
-    fill_index = find_fill_index(candles, signal_index, direction, entry)
+    fill_index = find_fill_index(candles, signal_index, direction, entry, wait=wait)
 
     if fill_index is None:
         return "no_fill", 0.0, None, None, None
 
-    # Re-check the thesis at fill time. A pullback entry can take a while
-    # to actually get touched — if the setup has flipped by then, the
-    # original plan is stale and shouldn't be blindly executed. We pass
-    # the original direction as "previous_raw_direction" here so the
-    # persistence gate doesn't spuriously block this re-check — we only
-    # care whether the raw signal has actually flipped, not re-requiring
-    # a fresh 2-hour confirmation at fill time.
-    fresh_plan = evaluate_signal_at(candles, fill_index, previous_raw_direction=direction)
+    if revalidate is None:
+        def revalidate(idx):
+            return evaluate_signal_at(candles, idx, previous_raw_direction=direction)
+    fresh_plan = revalidate(fill_index)
     if not fresh_plan or fresh_plan["direction"] != direction:
         return "invalidated", 0.0, None, None, fill_index
 
@@ -301,7 +327,7 @@ def simulate_trade(candles, signal_index, plan, funding_events=None):
         net_r = gross_r - fee_r + funding_r
         return outcome, net_r, exit_ts, {"gross_r": gross_r, "fee_r": fee_r, "funding_r": funding_r}, fill_index
 
-    for j in range(fill_index, min(fill_index + MAX_HOLD_CANDLES, len(candles))):
+    for j in range(fill_index, min(fill_index + max_hold, len(candles))):
         c = candles[j]
         if direction == "long":
             hit_stop = c["low"] <= stop
@@ -319,7 +345,7 @@ def simulate_trade(candles, signal_index, plan, funding_events=None):
             return finalize("win", r_multiple, candles[j]["ts"])
 
     # Timed out — mark to market
-    last_index = min(fill_index + MAX_HOLD_CANDLES, len(candles) - 1)
+    last_index = min(fill_index + max_hold, len(candles) - 1)
     last_close = candles[last_index]["close"]
     r_multiple = (last_close - entry) / risk if direction == "long" else (entry - last_close) / risk
     return finalize("timeout", r_multiple, candles[last_index]["ts"])
@@ -373,12 +399,80 @@ def walk_forward(candles, funding_events=None):
         }
 
 
-def run_backtest(candles, funding_events=None):
+def walk_forward_pa(candles_5m, funding_events=None):
+    """
+    Price-action walk-forward. Driven from a single 5M feed: the 15m/1H/4H
+    series are resampled up once, then at each 5M bar the evaluator is handed
+    the *last N completed* bars of each timeframe — exactly the windows the live
+    fetch_timeframes() would return — so the backtest sees what live sees, with
+    no lookahead (a higher bar is included only once its close index <= i).
+
+    Yields the same event dicts as walk_forward(), so run_backtest/summarize
+    consume both identically. The busy gate keeps one position at a time, and a
+    fired zone is remembered (previous_state) so the same setup doesn't re-fire
+    every 5M bar — mirroring the live bot's persisted state.
+    """
+    # Precompute the higher-TF bars once, each tagged with the 5M index it
+    # closes on, so an as-of slice is an O(log n) bisect rather than a rescan.
+    indexed = {tf: resample_indexed(candles_5m, PA_TF_MS[tf], PA_BASE_MS) for tf in PA_TF_MS}
+    close_idx = {tf: [ci for ci, _ in indexed[tf]] for tf in indexed}
+    bars = {tf: [b for _, b in indexed[tf]] for tf in indexed}
+
+    def bundle_at(i):
+        b = {"5m": candles_5m[max(0, i - PA_LIMITS["5m"] + 1): i + 1]}
+        for tf in PA_TF_MS:
+            hi = bisect.bisect_right(close_idx[tf], i)
+            lo = max(0, hi - PA_LIMITS[tf])
+            b[tf] = bars[tf][lo:hi]
+        return b
+
+    def evaluate_at(i, prev_state):
+        if i < PA_WARMUP_5M:
+            return None
+        return bot.evaluate_plan(None, candles_by_tf=bundle_at(i), previous_state=prev_state)
+
+    busy_until = -1
+    previous_state = {}  # {"zone_id", "direction"} of the last fired setup — dedupe key
+
+    for i in range(PA_WARMUP_5M, len(candles_5m) - 1):
+        plan = evaluate_at(i, previous_state)
+        if plan and plan.get("direction"):
+            previous_state = {"zone_id": plan.get("zone_id"), "direction": plan["direction"]}
+
+        if i <= busy_until:
+            continue
+        if not plan or not plan["direction"]:
+            continue
+
+        outcome, r_multiple, exit_ts, costs, fill_index = simulate_trade(
+            candles_5m, i, plan, funding_events,
+            revalidate=lambda idx: evaluate_at(idx, None),
+            wait=PA_ENTRY_WAIT_5M, max_hold=PA_MAX_HOLD_5M)
+
+        if outcome in ("no_fill", "invalidated"):
+            yield {
+                "signal_index": i, "plan": plan, "outcome": outcome,
+                "r_multiple": r_multiple, "exit_ts": exit_ts, "costs": costs,
+                "fill_index": fill_index, "exit_index": None,
+            }
+            continue
+
+        exit_index = next((k for k in range(i + 1, len(candles_5m)) if candles_5m[k]["ts"] == exit_ts),
+                          i + PA_ENTRY_WAIT_5M + PA_MAX_HOLD_5M)
+        busy_until = exit_index
+        yield {
+            "signal_index": i, "plan": plan, "outcome": outcome,
+            "r_multiple": r_multiple, "exit_ts": exit_ts, "costs": costs,
+            "fill_index": fill_index, "exit_index": exit_index,
+        }
+
+
+def run_backtest(candles, funding_events=None, walker=walk_forward):
     trades = []
     no_fill_count = 0
     invalidated_count = 0
 
-    for ev in walk_forward(candles, funding_events):
+    for ev in walker(candles, funding_events):
         if ev["outcome"] == "no_fill":
             no_fill_count += 1
             continue
@@ -533,16 +627,28 @@ def print_split_comparison(trades):
 
 
 def main():
+    price_action = bot.STRATEGY == "price_action"
+
     parser = argparse.ArgumentParser()
     parser.add_argument("--inst", default=bot.INST_ID)
-    parser.add_argument("--bar", default=bot.BAR)
+    # price_action is driven from a single 5M feed (resampled up to 15m/1H/4H),
+    # so its base bar is fixed at 5m; the indicator backtest keeps --bar.
+    parser.add_argument("--bar", default="5m" if price_action else bot.BAR)
     parser.add_argument("--months", type=float, default=6.0)
     parser.add_argument("--end-date", default=None,
                          help="Pull data ending at this date instead of now, e.g. 2024-06-01. "
                               "Use this to test an earlier out-of-sample period.")
     args = parser.parse_args()
 
-    target_count = target_count_for(args.bar, args.months)
+    if price_action:
+        args.bar = "5m"  # base feed is fixed for the multi-TF strategy
+        walker = walk_forward_pa
+        target_count = int(BARS_PER_MONTH["5m"] * args.months) + PA_WARMUP_5M
+        print(f"STRATEGY=price_action — driving 4H/1H/15M/5M from a single 5M feed.")
+    else:
+        walker = walk_forward
+        target_count = target_count_for(args.bar, args.months)
+
     end_ts = parse_end_ts(args.end_date)
 
     print(f"Fetching ~{target_count} {args.bar} candles for {args.inst}" + (f" ending {args.end_date}" if args.end_date else "") + " ...")
@@ -560,7 +666,7 @@ def main():
         print("         costs for the earlier part of this window. Treat the net R-multiple with extra caution.")
     print("Running backtest ...")
 
-    trades, no_fill_count, invalidated_count = run_backtest(candles, funding_events)
+    trades, no_fill_count, invalidated_count = run_backtest(candles, funding_events, walker=walker)
     equity = summarize(trades, no_fill_count, invalidated_count)
     print_split_comparison(trades)
     save_csv(trades)

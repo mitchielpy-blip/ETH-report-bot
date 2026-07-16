@@ -1,0 +1,67 @@
+name: Price-Action Report (ETH + SOL)
+
+# The price-action strategy triggers on a 5M break of structure, which the
+# hourly indicator report (:07 each hour) would miss. This runs the same bot
+# with STRATEGY=price_action every 15 minutes, matching the fill-checker
+# cadence, and keeps its own state/log files so it never clobbers the
+# indicator strategy's state.
+on:
+  schedule:
+    - cron: "9,24,39,54 * * * *"   # every 15 min, offset from the other jobs
+  workflow_dispatch: {}
+
+permissions:
+  contents: write   # needed so the workflow can commit state/log files back
+
+jobs:
+  post-report:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: pip install -r requirements.txt
+      - name: ETH price-action report
+        run: python eth_report_bot.py
+        env:
+          STRATEGY: price_action
+          STATE_FILE: state_pa.json
+          SIGNALS_LOG_FILE: signals_log_pa.csv
+          DISCORD_WEBHOOK_URL: ${{ secrets.DISCORD_WEBHOOK_URL }}
+          DISCORD_BOT_NAME: ETH Price-Action
+          OKX_PROXY: ${{ secrets.OKX_PROXY }}   # proxy OKX calls past the runner's geo-block
+      - name: SOL price-action report
+        if: always()   # a transient ETH failure shouldn't silence the SOL report
+        run: python eth_report_bot.py
+        env:
+          STRATEGY: price_action
+          INST_ID: SOL-USDT-SWAP
+          STATE_FILE: state_pa_sol.json
+          SIGNALS_LOG_FILE: signals_log_pa_sol.csv
+          DISCORD_WEBHOOK_URL: ${{ secrets.DISCORD_WEBHOOK_URL }}
+          DISCORD_BOT_NAME: SOL Price-Action
+          OKX_PROXY: ${{ secrets.OKX_PROXY }}
+      - name: Save signal state and log
+        if: always()
+        run: |
+          git config user.name "eth-report-bot"
+          git config user.email "actions@github.com"
+          git add state_pa*.json signals_log_pa*.csv
+          if git diff --staged --quiet; then
+            echo "No changes to commit."
+            exit 0
+          fi
+          git commit -m "Update price-action signal state and log [skip ci]"
+          for i in 1 2 3 4 5; do
+            git fetch origin main
+            if git rebase origin/main -X ours && git push origin main; then
+              echo "Pushed successfully."
+              exit 0
+            fi
+            echo "Push attempt $i failed (likely a race with another workflow run) — retrying..."
+            git rebase --abort 2>/dev/null || true
+            sleep $((RANDOM % 5 + 2))
+          done
+          echo "Failed to push after retries."
+          exit 1
