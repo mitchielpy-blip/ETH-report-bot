@@ -457,6 +457,15 @@ def _price_action_plan(candles_by_tf, previous_state=None):
     )
 
 
+def _price_action_revalidate(candles_by_tf, direction):
+    """Adapter for the price-action fill-time re-check (the retest-aware guard
+    in price_action.revalidate_fill), shared by fill_checker and the backtest
+    so both invalidate a stale pending entry identically."""
+    import price_action
+    return price_action.revalidate_fill(candles_by_tf, direction,
+                                        swing_left=PA_SWING_LEFT, swing_right=PA_SWING_RIGHT)
+
+
 def build_entry_levels(direction, price, atr_value, supports, resistances):
     """
     Place the entry, stop and target for a proposed trade. ENTRY_MODE selects

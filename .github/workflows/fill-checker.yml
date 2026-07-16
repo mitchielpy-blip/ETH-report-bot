@@ -30,6 +30,25 @@ jobs:
           STATE_FILE: state_sol.json
           DISCORD_WEBHOOK_URL: ${{ secrets.DISCORD_WEBHOOK_URL }}
           OKX_PROXY: ${{ secrets.OKX_PROXY }}
+      - name: ETH price-action fill check
+        if: always()   # watch the price-action strategy's pending entries too
+        run: python fill_checker.py
+        env:
+          STRATEGY: price_action
+          STATE_FILE: state_pa.json
+          DISCORD_WEBHOOK_URL: ${{ secrets.DISCORD_WEBHOOK_URL }}
+          DISCORD_BOT_NAME: ETH Price-Action
+          OKX_PROXY: ${{ secrets.OKX_PROXY }}
+      - name: SOL price-action fill check
+        if: always()
+        run: python fill_checker.py
+        env:
+          STRATEGY: price_action
+          INST_ID: SOL-USDT-SWAP
+          STATE_FILE: state_pa_sol.json
+          DISCORD_WEBHOOK_URL: ${{ secrets.DISCORD_WEBHOOK_URL }}
+          DISCORD_BOT_NAME: SOL Price-Action
+          OKX_PROXY: ${{ secrets.OKX_PROXY }}
       - name: Save signal state
         if: always()
         run: |

@@ -302,3 +302,32 @@ def evaluate_price_action_plan(candles_by_tf, previous_state=None, *,
         "bos_level": bos_level,
         "trend": trend,
     }
+
+
+def revalidate_fill(candles_by_tf, direction, *, swing_left=2, swing_right=2):
+    """
+    Fill-time re-check for a pending price-action entry.
+
+    The break-of-structure and the 15M rejection both happen *before* the
+    retest that actually fills the order, so re-running the full 4-step chain
+    here would wrongly reject every genuine retest — by the time price pulls
+    back to the entry there is no *current* 5M BOS to detect. The thesis that
+    must still hold at fill time is the top-level filter: the 4H trend. If the
+    higher-timeframe structure has flipped or gone to range while we waited for
+    the retest, the setup is stale and we skip it — the same "setup decayed by
+    fill time" guard the indicator strategy applies, just keyed on structure
+    instead of the bias score.
+
+    Returns a plan-shaped dict ({"direction": ...}) so it drops straight into
+    the shared re-check callers (fill_checker and backtest.simulate_trade),
+    which only look at ["direction"].
+    """
+    trend = swing_trend(candles_by_tf.get("4H", []), swing_left, swing_right)
+    still_valid = (
+        (trend == "bullish" and direction == "long")
+        or (trend == "bearish" and direction == "short")
+    )
+    if still_valid:
+        return {"direction": direction}
+    return {"direction": None,
+            "reason": f"4H trend no longer agrees with the pending {direction} — setup went stale."}

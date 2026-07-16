@@ -444,9 +444,13 @@ def walk_forward_pa(candles_5m, funding_events=None):
         if not plan or not plan["direction"]:
             continue
 
+        # Fill-time re-check uses the retest-aware guard (4H trend still
+        # agrees), NOT the full 4-step chain — otherwise the retest that fills
+        # the order (no current BOS) would be invalidated every time. Same
+        # function the live fill_checker uses, so backtest and live agree.
         outcome, r_multiple, exit_ts, costs, fill_index = simulate_trade(
             candles_5m, i, plan, funding_events,
-            revalidate=lambda idx: evaluate_at(idx, None),
+            revalidate=lambda idx: bot._price_action_revalidate(bundle_at(idx), plan["direction"]),
             wait=PA_ENTRY_WAIT_5M, max_hold=PA_MAX_HOLD_5M)
 
         if outcome in ("no_fill", "invalidated"):

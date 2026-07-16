@@ -187,7 +187,12 @@ all sweepable like `PULLBACK_ATR_MULT`):
 Because the 5M break-of-structure trigger is time-sensitive, the price-action
 strategy runs on its **own workflow** (`.github/workflows/price-action.yml`,
 every 15 minutes) with its own `state_pa*.json` / `signals_log_pa*.csv` files,
-so it never clobbers the hourly indicator strategy's state.
+so it never clobbers the hourly indicator strategy's state. `fill_checker.py`
+also watches the price-action pending entries (added to
+`.github/workflows/fill-checker.yml`) and posts an **"Entry filled"** alert
+when the retest level is touched — after re-checking that the 4H trend still
+agrees, so a setup that went stale while waiting for the retest is skipped
+rather than entered.
 
 ### Backtesting the price-action strategy
 
