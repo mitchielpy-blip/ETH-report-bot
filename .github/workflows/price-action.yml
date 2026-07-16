@@ -6,9 +6,13 @@ name: Price-Action Report (ETH + SOL)
 # cadence, and keeps its own state/log files so it never clobbers the
 # indicator strategy's state.
 on:
-  schedule:
-    - cron: "9,24,39,54 * * * *"   # every 15 min, offset from the other jobs
-  workflow_dispatch: {}
+  # PAUSED: the scheduled run is disabled while the price-action strategy is
+  # still unvalidated (the first 6-month ETH backtest produced only 5 trades —
+  # too few to trust). Re-enable by uncommenting the schedule block below once
+  # a parameter sweep shows a positive, consistent edge across ETH + SOL.
+  # schedule:
+  #   - cron: "9,24,39,54 * * * *"   # every 15 min, offset from the other jobs
+  workflow_dispatch: {}   # still runnable manually from the Actions tab
 
 permissions:
   contents: write   # needed so the workflow can commit state/log files back
