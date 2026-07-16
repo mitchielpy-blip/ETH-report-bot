@@ -78,7 +78,16 @@ def main():
     # to the backtest than filling blindly. We pass the pending direction as
     # previous_raw_direction so the re-check only asks "has the raw signal
     # flipped?", not "re-confirm over two fresh hours" — matching the backtest.
-    fresh = bot.evaluate_plan(bot.fetch_candles(), previous_raw_direction=direction)
+    if bot.STRATEGY == "price_action":
+        # Retest-aware re-check: the BOS/rejection already happened before this
+        # retest fill, so re-running the full 4-step chain would reject every
+        # genuine retest. revalidate_fill only asks whether the 4H trend still
+        # agrees (see price_action.revalidate_fill). We fetch the four
+        # timeframes only now that the level has actually been touched, keeping
+        # the common "not filled yet" path a single cheap ticker call.
+        fresh = bot._price_action_revalidate(bot.fetch_timeframes(), direction)
+    else:
+        fresh = bot.evaluate_plan(bot.fetch_candles(), previous_raw_direction=direction)
     if not fresh or fresh.get("direction") != direction:
         if not fresh:
             reason = "insufficient data to re-evaluate"

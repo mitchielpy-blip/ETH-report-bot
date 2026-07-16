@@ -3,6 +3,14 @@ name: Run Backtest
 on:
   workflow_dispatch:
     inputs:
+      strategy:
+        description: "Strategy to backtest (indicator or price_action)"
+        required: false
+        default: "indicator"
+        type: choice
+        options:
+          - indicator
+          - price_action
       inst:
         description: "Instrument to test (e.g. ETH-USDT-SWAP, BTC-USDT-SWAP)"
         required: false
@@ -12,7 +20,7 @@ on:
         required: false
         default: "6"
       bar:
-        description: "Candle timeframe (1H, 15m, 4H)"
+        description: "Candle timeframe for the indicator strategy (1H, 15m, 4H). Ignored for price_action, which is always driven from a 5m feed."
         required: false
         default: "1H"
       end_date:
@@ -41,7 +49,8 @@ jobs:
           fi
           python -u backtest.py $ARGS
         env:
-          ADX_MIN: ${{ github.event.inputs.adx_min }}
+          STRATEGY: ${{ github.event.inputs.strategy }}
+          ADX_MIN: ${{ github.event.inputs.adx_min }}   # indicator strategy only
           OKX_PROXY: ${{ secrets.OKX_PROXY }}   # proxy OKX calls past the runner's geo-block
       - name: Upload results
         uses: actions/upload-artifact@v4

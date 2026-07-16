@@ -94,6 +94,36 @@ VOLUME_LOW_RATIO = float(os.environ.get("VOLUME_LOW_RATIO", 0.7))          # bel
 # all three components agree on an order's lifetime.
 PENDING_ENTRY_LIFETIME_HOURS = float(os.environ.get("PENDING_ENTRY_LIFETIME_HOURS", 8))
 
+# Which strategy the "candles -> plan" seam runs:
+#   "indicator"    (default) — the original RSI/MACD/EMA/ADX/volume bias-score
+#                              model on 1H + a 4H EMA trend filter.
+#   "price_action"           — a 4-timeframe (4H/1H/15M/5M) structure/zone/
+#                              rejection/break-of-structure model, implemented in
+#                              price_action.py. See PRICE-ACTION tunables below.
+# Both return the identical plan-dict shape, so state, logging, posting, the
+# fill checker and the backtest all work either way.
+STRATEGY = os.environ.get("STRATEGY", "indicator")
+
+# --- PRICE-ACTION tunables (only used when STRATEGY=price_action) -----------
+# The Threads strategy is discretionary; these turn its fuzzy language into
+# mechanical thresholds you can sweep, exactly like PULLBACK_ATR_MULT. None of
+# these are validated yet — backtest before relying on them.
+PA_TIMEFRAMES = {
+    "4H": os.environ.get("PA_TREND_BAR", "4H"),    # Step 1 — trend structure
+    "1H": os.environ.get("PA_ZONE_BAR", "1H"),     # Step 2 — reversal zone
+    "15m": os.environ.get("PA_REACT_BAR", "15m"),  # Step 3 — rejection
+    "5m": os.environ.get("PA_TRIGGER_BAR", "5m"),  # Step 4 — break of structure
+}
+PA_SWING_LEFT = int(os.environ.get("PA_SWING_LEFT", 2))          # pivot bars to the left
+PA_SWING_RIGHT = int(os.environ.get("PA_SWING_RIGHT", 2))         # pivot bars to the right (confirmation lag)
+PA_IMPULSE_ATR_MULT = float(os.environ.get("PA_IMPULSE_ATR_MULT", 2.0))  # "aggressive" departure, in 1H ATRs
+PA_IMPULSE_MAX_BARS = int(os.environ.get("PA_IMPULSE_MAX_BARS", 5))       # ...within this many 1H bars
+PA_REJECTION_LOOKBACK = int(os.environ.get("PA_REJECTION_LOOKBACK", 8))   # 15M bars to look back for a rejection
+PA_REJECTION_WICK_RATIO = float(os.environ.get("PA_REJECTION_WICK_RATIO", 0.5))  # min wick share of a rejection candle
+PA_ZONE_STOP_ATR_MULT = float(os.environ.get("PA_ZONE_STOP_ATR_MULT", 0.5))      # stop buffer beyond the zone, in 5M ATRs
+PA_BOS_LEFT = int(os.environ.get("PA_BOS_LEFT", 1))              # 5M swing pivot (left) for the BOS check
+PA_BOS_RIGHT = int(os.environ.get("PA_BOS_RIGHT", 1))            # 5M swing pivot (right) for the BOS check
+
 
 def parse_candle_row(row):
     """
@@ -393,6 +423,49 @@ def higher_timeframe_trend(bar=HTF_BAR):
     return htf_trend_from_closes([c["close"] for c in htf_candles])
 
 
+def fetch_timeframes(timeframes=None):
+    """
+    Fetch the four completed-candle series the price-action strategy needs,
+    keyed by role: {"4H": [...], "1H": [...], "15m": [...], "5m": [...]}, each
+    oldest -> newest. Reuses fetch_candles (which already strips the in-progress
+    candle), so every bar handed to price_action is closed — the same guarantee
+    the backtest gives by resampling only completed bars. The live counterpart
+    of the backtest's single-5M-feed-resampled-up approach.
+    """
+    timeframes = timeframes or PA_TIMEFRAMES
+    # Higher timeframes need fewer bars; 5M needs a wide window to hold enough
+    # structure for the BOS check without a huge fetch.
+    limits = {"4H": 120, "1H": 120, "15m": 120, "5m": 200}
+    bundle = {}
+    for role, bar in timeframes.items():
+        bundle[role] = fetch_candles(bar=bar, limit=limits.get(role, 120))
+    return bundle
+
+
+def _price_action_plan(candles_by_tf, previous_state=None):
+    """Adapter: call the shared price_action evaluator with this module's
+    env-configured tunables. Imported lazily so the default indicator path
+    never depends on price_action."""
+    import price_action
+    return price_action.evaluate_price_action_plan(
+        candles_by_tf, previous_state,
+        swing_left=PA_SWING_LEFT, swing_right=PA_SWING_RIGHT,
+        impulse_atr_mult=PA_IMPULSE_ATR_MULT, impulse_max_bars=PA_IMPULSE_MAX_BARS,
+        rejection_lookback=PA_REJECTION_LOOKBACK, rejection_wick_ratio=PA_REJECTION_WICK_RATIO,
+        zone_stop_atr_mult=PA_ZONE_STOP_ATR_MULT, min_rr=MIN_RR,
+        entry_mode=ENTRY_MODE, bos_left=PA_BOS_LEFT, bos_right=PA_BOS_RIGHT,
+    )
+
+
+def _price_action_revalidate(candles_by_tf, direction):
+    """Adapter for the price-action fill-time re-check (the retest-aware guard
+    in price_action.revalidate_fill), shared by fill_checker and the backtest
+    so both invalidate a stale pending entry identically."""
+    import price_action
+    return price_action.revalidate_fill(candles_by_tf, direction,
+                                        swing_left=PA_SWING_LEFT, swing_right=PA_SWING_RIGHT)
+
+
 def build_entry_levels(direction, price, atr_value, supports, resistances):
     """
     Place the entry, stop and target for a proposed trade. ENTRY_MODE selects
@@ -510,9 +583,13 @@ def suggest_trade_plan(price, score, atr_value, supports, resistances, htf_trend
 # live" apart from "caller explicitly passed htf_trend=None (trend unknown)".
 # The backtest MUST always pass an explicit value so it never hits the network.
 _HTF_UNSET = object()
+# Same idea for the price-action bundle: unset -> fetch the four timeframes
+# live; passed explicitly (by the backtest) -> never hit the network.
+_PA_UNSET = object()
 
 
-def evaluate_plan(candles, previous_raw_direction=None, htf_trend=_HTF_UNSET):
+def evaluate_plan(candles, previous_raw_direction=None, htf_trend=_HTF_UNSET,
+                  candles_by_tf=_PA_UNSET, previous_state=None):
     """
     Derive the trade plan for a completed-candle series — the decision half of
     build_report, without any of the report formatting.
@@ -528,10 +605,19 @@ def evaluate_plan(candles, previous_raw_direction=None, htf_trend=_HTF_UNSET):
     re-check or the backtest is precisely how a backtest silently stops
     describing the bot — so there is only this one path.
 
-    htf_trend may be passed in to reuse an already-fetched higher-timeframe
-    read (build_report does this); left unset it is fetched live. The backtest
-    always passes its own resampled trend explicitly, so it never fetches.
+    STRATEGY selects the model. For "price_action" the plan comes from the
+    four-timeframe bundle (fetched live when candles_by_tf is unset, or passed
+    in by the backtest); `candles` is still accepted so the shared callers'
+    signatures don't change. For "indicator" (default) the original logic runs
+    unchanged: htf_trend may be passed in to reuse an already-fetched
+    higher-timeframe read (build_report does this); left unset it is fetched
+    live, and the backtest always passes its own resampled trend explicitly.
     """
+    if STRATEGY == "price_action":
+        if candles_by_tf is _PA_UNSET:
+            candles_by_tf = fetch_timeframes()
+        return _price_action_plan(candles_by_tf, previous_state)
+
     price = candles[-1]["close"]
     supports, resistances = support_resistance(candles)
     atr_value = atr(candles)
@@ -607,6 +693,50 @@ def build_report(candles, previous_raw_direction=None):
     return "\n".join(lines), plan
 
 
+def build_price_action_report(candles_by_tf, previous_state=None):
+    """
+    Report body for STRATEGY=price_action. Shows the 4-timeframe checklist
+    (4H trend -> 1H zone -> 15M rejection -> 5M break of structure) and the
+    resulting plan. The plan comes from the shared evaluate_plan so this report
+    can never diverge from the fill-checker or the backtest.
+    """
+    import price_action as pa
+
+    c4h, c1h, c5 = candles_by_tf["4H"], candles_by_tf["1H"], candles_by_tf["5m"]
+    price = c5[-1]["close"]
+    plan = evaluate_plan(c1h, candles_by_tf=candles_by_tf, previous_state=previous_state)
+
+    trend = pa.swing_trend(c4h, PA_SWING_LEFT, PA_SWING_RIGHT)
+    trend_label = {"bullish": "bullish (HH/HL) — longs only",
+                   "bearish": "bearish (LH/LL) — shorts only"}.get(trend, "ranging — stand aside")
+
+    lines = []
+    lines.append(f"**{ASSET} Price-Action Report · {datetime.now(SGT).strftime('%Y-%m-%d %H:%M')} SGT**")
+    lines.append(f"Price: ${price:,.2f} (last completed {PA_TIMEFRAMES['5m']} close)")
+    lines.append(f"1. Trend ({PA_TIMEFRAMES['4H']}): {trend_label}")
+    if plan.get("zone"):
+        zl, zh = plan["zone"]
+        lines.append(f"2. Zone ({PA_TIMEFRAMES['1H']}): ${zl:,.2f} - ${zh:,.2f}")
+    if plan["direction"]:
+        lines.append(f"3. Reaction ({PA_TIMEFRAMES['15m']}): rejection confirmed")
+        lines.append(f"4. Confirmation ({PA_TIMEFRAMES['5m']}): broke structure at ${plan['bos_level']:,.2f}")
+
+    lines.append("")
+    if plan["direction"]:
+        dir_label = "LONG" if plan["direction"] == "long" else "SHORT"
+        lines.append(f"**Suggested direction: {dir_label}**")
+        lines.append(f"Suggested entry: ${plan['entry']:,.2f}")
+        lines.append(f"Stop-loss: ${plan['stop']:,.2f}")
+        lines.append(f"Take-profit: ${plan['target']:,.2f}")
+        lines.append(f"Risk:Reward: about 1:{plan['rr']:.2f}")
+    else:
+        lines.append("**Suggested direction: No entry**")
+        lines.append(plan["reason"])
+
+    lines.append("\n_Auto-generated from price-action rules only — not a win rate, not investment advice. Entry levels are rule-based estimates. Confirm risk and position size yourself before placing any order._")
+    return "\n".join(lines), plan
+
+
 def fetch_ticker_price(inst_id=None):
     """Lightweight single current-price check — much cheaper than a full candle fetch."""
     inst_id = inst_id or INST_ID
@@ -660,6 +790,11 @@ def should_post(plan, previous_state):
     market doesn't spam the channel every hour. Any active directional
     signal, or a change in direction, always posts.
     """
+    # A "no news" no-trade (e.g. the price-action strategy re-seeing a zone it
+    # already signalled) never posts, so a pending setup doesn't re-announce
+    # itself every run.
+    if plan.get("suppress_post"):
+        return False
     current_direction = plan["direction"]
     previous_direction = previous_state.get("direction")
     if current_direction is None and previous_direction is None:
@@ -725,19 +860,28 @@ def post_to_discord(content):
 
 
 def main():
-    candles = fetch_candles()
-    if len(candles) < 30:
-        print("Not enough candle data returned.", file=sys.stderr)
-        sys.exit(1)
-
     previous_state = load_state()
-    report, plan = build_report(candles, previous_state.get("last_raw_direction"))
+
+    if STRATEGY == "price_action":
+        bundle = fetch_timeframes()
+        if any(len(bundle[role]) < 30 for role in bundle):
+            print("Not enough candle data returned across timeframes.", file=sys.stderr)
+            sys.exit(1)
+        report, plan = build_price_action_report(bundle, previous_state)
+        price = bundle["5m"][-1]["close"]
+    else:
+        candles = fetch_candles()
+        if len(candles) < 30:
+            print("Not enough candle data returned.", file=sys.stderr)
+            sys.exit(1)
+        report, plan = build_report(candles, previous_state.get("last_raw_direction"))
+        price = candles[-1]["close"]
 
     print("--- Generated report (always logged here, whether or not it posts) ---")
     print(report)
     print("--- end report ---")
 
-    log_signal(candles[-1]["close"], plan)
+    log_signal(price, plan)
 
     if should_post(plan, previous_state):
         post_to_discord(report)
@@ -760,6 +904,10 @@ def main():
             "generated_at_ts": int(datetime.now(timezone.utc).timestamp() * 1000),
             "filled": False,
         }
+        # price_action dedupe key: while this entry stays pending the same 1H
+        # zone won't re-fire (see evaluate_price_action_plan).
+        if plan.get("zone_id") is not None:
+            new_state["zone_id"] = plan["zone_id"]
     elif pending_order_is_live(previous_state):
         new_state = dict(previous_state)
         new_state["last_raw_direction"] = plan.get("raw_direction")
