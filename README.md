@@ -36,13 +36,23 @@ numbers are even measuring the strategy you think they are.
 > indicator strategy only. Raising `ADX_MIN` (25/30) only hurt BTC, so the
 > default 20 is kept.
 >
-> **All-three snapshot, same trailing-12mo window (re-run 2026-07-17):** on
-> one consistent recent window, SOL 63.2% win / +0.56R (68 trades), ETH 55.7%
-> win / +0.39R (61), BTC 53.1% win / +0.25R (66). BTC is the weakest on every
-> axis (win rate, expectancy, and ~2x the drawdown). All three shared the same
-> weak-first-half / strong-second-half shape this window (they're correlated),
-> so these trailing numbers are flattered by the back half — don't read the
-> headline win rate as a steady-state rate.
+> **All-three snapshot, same trailing-12mo window — after the 2026-07-17
+> fill-gate fix:** the fill-time re-check no longer re-gates R:R against
+> freshly-recomputed levels (it only checks the direction hasn't flipped),
+> which roughly *doubled* the number of fills. On one consistent recent
+> window: **SOL 55.0% win / +0.35R** (121 trades, sim equity +50%, 5.1% DD),
+> **ETH 50.0% win / +0.23R** (120 trades, +31%, 12.1% DD), **BTC 47.9% win /
+> +0.14R** (144 trades, +21%, 8.0% DD). All three keep both walk-forward
+> halves positive (BTC's first half is ~flat). This trades a higher hit rate
+> for ~2x the activity: the old R:R re-gate was inadvertently filtering out
+> fills into expanded-volatility / no-room-to-target conditions, so removing
+> it recovers those setups but dilutes per-trade edge while total return stays
+> positive. **These supersede the earlier pre-fix figures** — SOL 63.2% /
+> +0.56R (68 trades), ETH 55.7% / +0.39R (61), BTC 53.1% / +0.25R (66) — that
+> the per-window BTC analysis above still quotes. BTC is the weakest on every
+> axis. All three shared the same weak-first-half / strong-second-half shape
+> this window (they're correlated), so these trailing numbers are flattered by
+> the back half — don't read the headline win rate as a steady-state rate.
 >
 > **SOL added + short gate loosened 2026-07-14.** Two changes, both
 > validated on 12-month 1H backtests before going live:
@@ -75,6 +85,16 @@ numbers are even measuring the strategy you think they are.
 > backtest's expectancy was optimistically biased. This changes which
 > fills go live, so treat pre-2026-07-12 fills as a slightly different
 > (more permissive) strategy when reading `forward_test_report.py`.
+>
+> **Refined 2026-07-17.** The fill-time re-check now only asks whether the
+> *direction* still holds — it no longer re-applies the `MIN_RR` gate to a
+> plan rebuilt from the latest ATR. A pending order already has its
+> entry/stop/target (and R:R) locked from signal time, so re-gating on a
+> freshly-recomputed R:R was discarding valid fills purely because volatility
+> had ticked up before fill. The direction-flip protection stays; only the
+> spurious R:R invalidation is gone (`require_rr=False` at fill time, shared
+> by live and backtest). This roughly doubled fills — see the post-fix
+> all-three snapshot above for the win-rate/expectancy impact.
 >
 > **Restarted 2026-07-11.** Prior signals_log.csv archived as
 > `signals_log_pre_v2.csv` (not deleted — kept for reference, but excluded
