@@ -99,6 +99,17 @@ ENTRY_MODE = os.environ.get("ENTRY_MODE", "pullback")
 ADX_MIN = float(os.environ.get("ADX_MIN", 20))                        # skip trades when trend strength is below this
 VOLUME_CONFIRM_RATIO = float(os.environ.get("VOLUME_CONFIRM_RATIO", 1.2))  # above-average volume amplifies conviction
 VOLUME_LOW_RATIO = float(os.environ.get("VOLUME_LOW_RATIO", 0.7))          # below-average volume dampens conviction
+# How RSI feeds the bias score:
+#   "momentum" (default, live) — linear: the higher the RSI, the more bullish,
+#       so conviction keeps building even into overbought (a trend-following read).
+#   "fade"                     — momentum inside the RSI_FADE_BAND around 50, but
+#       beyond it the contribution fades back and eventually reverses, so an
+#       overbought RSI stops adding to (and then subtracts from) long conviction
+#       (a mean-reversion-at-extremes read). An experiment — leave "momentum"
+#       for the validated live behaviour; flip to "fade" only under backtest.py.
+RSI_MODE = os.environ.get("RSI_MODE", "momentum")
+RSI_FADE_BAND = float(os.environ.get("RSI_FADE_BAND", 20))    # +/- around 50 (i.e. 30..70) where RSI still reads as momentum
+RSI_FADE_SLOPE = float(os.environ.get("RSI_FADE_SLOPE", 0.4))  # how fast the contribution fades once past the band
 
 # How long a pending (unfilled) pullback entry stays live before being
 # discarded. Keep this equal to the backtest's ENTRY_WAIT_CANDLES (in
@@ -373,6 +384,25 @@ def support_resistance(candles, lookback=40, n_levels=3):
     return supports, resistances
 
 
+def _rsi_contribution(r):
+    """
+    RSI's contribution to the bias score. RSI_MODE selects the shape:
+      * "momentum" (default) — linear (r - 50) * 0.4, so conviction keeps
+        rising with RSI even into overbought (byte-identical to the original).
+      * "fade" — the same slope inside +/- RSI_FADE_BAND of 50, but past the
+        band the contribution fades at RSI_FADE_SLOPE and then flips sign, so a
+        very overbought RSI reads as a (mild) reversal rather than more upside.
+    """
+    if RSI_MODE != "fade":
+        return (r - 50) * 0.4
+    dev = r - 50
+    if abs(dev) <= RSI_FADE_BAND:
+        return dev * 0.4
+    edge = RSI_FADE_BAND * 0.4                     # contribution at the band edge
+    faded = edge - (abs(dev) - RSI_FADE_BAND) * RSI_FADE_SLOPE
+    return faded if dev > 0 else -faded
+
+
 def compute_bias_score(candles):
     """
     Heuristic 0-100 bias score (clamped to 5-95) from completed candles.
@@ -392,7 +422,7 @@ def compute_bias_score(candles):
 
     score = 50
     if r is not None:
-        score += (r - 50) * 0.4
+        score += _rsi_contribution(r)
     score += 15 if ema20 > ema50 else -15
     score += 10 if hist > 0 else -10
 

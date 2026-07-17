@@ -39,6 +39,14 @@ on:
         options:
           - atr
           - structure
+      rsi_mode:
+        description: "How RSI feeds the score: momentum (linear) or fade (mean-reversion at extremes). Indicator strategy only."
+        required: false
+        default: "momentum"
+        type: choice
+        options:
+          - momentum
+          - fade
 
 jobs:
   backtest:
@@ -60,6 +68,7 @@ jobs:
           STRATEGY: ${{ github.event.inputs.strategy }}
           ADX_MIN: ${{ github.event.inputs.adx_min }}   # indicator strategy only
           STOP_MODE: ${{ github.event.inputs.stop_mode }}   # indicator strategy only
+          RSI_MODE: ${{ github.event.inputs.rsi_mode }}   # indicator strategy only
           OKX_PROXY: ${{ secrets.OKX_PROXY }}   # proxy OKX calls past the runner's geo-block
       - name: Upload results
         uses: actions/upload-artifact@v4
