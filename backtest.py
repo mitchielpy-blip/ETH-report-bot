@@ -242,7 +242,7 @@ def resample_htf(candles_1h, group_ms=HTF_GROUP_MS):
     return resample(candles_1h, group_ms, 3600 * 1000)
 
 
-def evaluate_signal_at(candles, i, previous_raw_direction=None):
+def evaluate_signal_at(candles, i, previous_raw_direction=None, previous_raw_streak=0):
     """Run the exact same logic as build_report(), but using only candles[:i+1]."""
     window = candles[:i + 1]
     if len(window) < WARMUP_CANDLES:
@@ -255,7 +255,8 @@ def evaluate_signal_at(candles, i, previous_raw_direction=None):
     # pass in explicitly — that also guarantees the backtest never hits the
     # network for HTF data.
     htf_trend = bot.htf_trend_from_closes([c["close"] for c in resample_htf(window)])
-    return bot.evaluate_plan(window, previous_raw_direction, htf_trend=htf_trend)
+    return bot.evaluate_plan(window, previous_raw_direction, htf_trend=htf_trend,
+                             previous_raw_streak=previous_raw_streak)
 
 
 def find_fill_index(candles, signal_index, direction, entry, wait=ENTRY_WAIT_CANDLES):
@@ -315,7 +316,12 @@ def simulate_trade(candles, signal_index, plan, funding_events=None,
 
     if revalidate is None:
         def revalidate(idx):
-            return evaluate_signal_at(candles, idx, previous_raw_direction=direction)
+            # previous_raw_streak = PERSIST_HOURS - 1 so the persistence gate
+            # reduces to "does the raw signal still agree?" at fill time — the
+            # same agreement-only re-check the live fill_checker performs (a
+            # fresh multi-hour re-confirmation here would reject genuine fills).
+            return evaluate_signal_at(candles, idx, previous_raw_direction=direction,
+                                      previous_raw_streak=max(bot.PERSIST_HOURS - 1, 0))
     fresh_plan = revalidate(fill_index)
     if not fresh_plan or fresh_plan["direction"] != direction:
         return "invalidated", 0.0, None, None, fill_index
@@ -368,10 +374,12 @@ def walk_forward(candles, funding_events=None):
     """
     busy_until = -1  # don't take overlapping trades — one position at a time
     previous_raw_direction = None  # tracked every hour, matching the live bot's persistence gate
+    previous_raw_streak = 0        # run-length of that raw direction (for PERSIST_HOURS)
 
     for i in range(WARMUP_CANDLES, len(candles) - 1):
-        plan = evaluate_signal_at(candles, i, previous_raw_direction)
+        plan = evaluate_signal_at(candles, i, previous_raw_direction, previous_raw_streak)
         previous_raw_direction = plan.get("raw_direction") if plan else None
+        previous_raw_streak = plan.get("raw_streak", 0) if plan else 0
 
         if i <= busy_until:
             continue
