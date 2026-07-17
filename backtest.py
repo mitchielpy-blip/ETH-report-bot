@@ -242,8 +242,13 @@ def resample_htf(candles_1h, group_ms=HTF_GROUP_MS):
     return resample(candles_1h, group_ms, 3600 * 1000)
 
 
-def evaluate_signal_at(candles, i, previous_raw_direction=None):
-    """Run the exact same logic as build_report(), but using only candles[:i+1]."""
+def evaluate_signal_at(candles, i, previous_raw_direction=None, require_rr=True):
+    """Run the exact same logic as build_report(), but using only candles[:i+1].
+
+    require_rr defaults True for signal generation. The fill-time revalidate
+    passes require_rr=False so it matches the live fill checker: a pending order
+    already has its R:R locked from signal time, so re-gating on a freshly
+    recomputed R:R would discard valid fills (see bot.suggest_trade_plan)."""
     window = candles[:i + 1]
     if len(window) < WARMUP_CANDLES:
         return None
@@ -255,7 +260,7 @@ def evaluate_signal_at(candles, i, previous_raw_direction=None):
     # pass in explicitly — that also guarantees the backtest never hits the
     # network for HTF data.
     htf_trend = bot.htf_trend_from_closes([c["close"] for c in resample_htf(window)])
-    return bot.evaluate_plan(window, previous_raw_direction, htf_trend=htf_trend)
+    return bot.evaluate_plan(window, previous_raw_direction, htf_trend=htf_trend, require_rr=require_rr)
 
 
 def find_fill_index(candles, signal_index, direction, entry, wait=ENTRY_WAIT_CANDLES):
@@ -315,7 +320,7 @@ def simulate_trade(candles, signal_index, plan, funding_events=None,
 
     if revalidate is None:
         def revalidate(idx):
-            return evaluate_signal_at(candles, idx, previous_raw_direction=direction)
+            return evaluate_signal_at(candles, idx, previous_raw_direction=direction, require_rr=False)
     fresh_plan = revalidate(fill_index)
     if not fresh_plan or fresh_plan["direction"] != direction:
         return "invalidated", 0.0, None, None, fill_index

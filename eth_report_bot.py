@@ -518,7 +518,7 @@ def build_entry_levels(direction, price, atr_value, supports, resistances):
     return entry, stop, target
 
 
-def suggest_trade_plan(price, score, atr_value, supports, resistances, htf_trend=None, adx_value=None, previous_raw_direction=None):
+def suggest_trade_plan(price, score, atr_value, supports, resistances, htf_trend=None, adx_value=None, previous_raw_direction=None, require_rr=True):
     """
     Rule-based entry/SL/TP suggestion. Returns a dict, or None if no setup
     clears the minimum reward:risk bar (mirrors "RR不合格，不開倉" logic).
@@ -530,6 +530,15 @@ def suggest_trade_plan(price, score, atr_value, supports, resistances, htf_trend
     higher-timeframe checks pass, and the resulting reward:risk clears
     MIN_RR. Every return includes "raw_direction" so the caller can track
     it for next hour's persistence check, even when no trade results.
+
+    require_rr gates on the reward:reward at *signal-generation* time (the
+    default). The fill-time re-check passes require_rr=False: by then a
+    pending order already exists with its entry/stop/target — and thus its
+    R:R — locked in from when it was generated. Re-deriving fresh levels from
+    the latest ATR and re-gating on *their* R:R would throw away a valid fill
+    because a different, hypothetical trade wouldn't qualify. At fill time we
+    only care whether the directional thesis still holds, not whether a
+    freshly-minted plan would clear MIN_RR.
     """
     if score >= LONG_SCORE_MIN:
         raw_direction = "long"
@@ -569,8 +578,9 @@ def suggest_trade_plan(price, score, atr_value, supports, resistances, htf_trend
     # Gate on the R:R as it's actually shown (rounded to 2dp), so a setup the
     # report displays as e.g. "1.50" isn't rejected because its raw value was
     # 1.497. Without this, a true R:R just under the threshold rounds up on
-    # screen and looks like a rejected 1.50, which is confusing.
-    if round(rr, 2) < MIN_RR:
+    # screen and looks like a rejected 1.50, which is confusing. Skipped when
+    # require_rr is False (the fill-time re-check) — see the docstring.
+    if require_rr and round(rr, 2) < MIN_RR:
         return {"direction": None, "reason": f"Risk:reward is {rr:.2f}, below the {MIN_RR} threshold — sitting out this hour.", "raw_direction": raw_direction}
 
     return {
@@ -593,7 +603,7 @@ _PA_UNSET = object()
 
 
 def evaluate_plan(candles, previous_raw_direction=None, htf_trend=_HTF_UNSET,
-                  candles_by_tf=_PA_UNSET, previous_state=None):
+                  candles_by_tf=_PA_UNSET, previous_state=None, require_rr=True):
     """
     Derive the trade plan for a completed-candle series — the decision half of
     build_report, without any of the report formatting.
@@ -630,7 +640,7 @@ def evaluate_plan(candles, previous_raw_direction=None, htf_trend=_HTF_UNSET,
     if htf_trend is _HTF_UNSET:
         htf_trend = higher_timeframe_trend()
     return suggest_trade_plan(price, score, atr_value, supports, resistances,
-                              htf_trend, adx_value, previous_raw_direction)
+                              htf_trend, adx_value, previous_raw_direction, require_rr=require_rr)
 
 
 def build_report(candles, previous_raw_direction=None):
