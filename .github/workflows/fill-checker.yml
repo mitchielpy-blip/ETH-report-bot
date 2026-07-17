@@ -30,6 +30,15 @@ jobs:
           STATE_FILE: state_sol.json
           DISCORD_WEBHOOK_URL: ${{ secrets.DISCORD_WEBHOOK_URL }}
           OKX_PROXY: ${{ secrets.OKX_PROXY }}
+      - name: BTC fill check
+        if: always()   # a transient ETH/SOL failure shouldn't stop the BTC check
+        run: python fill_checker.py
+        env:
+          INST_ID: BTC-USDT-SWAP
+          STATE_FILE: state_btc.json
+          DISCORD_WEBHOOK_URL: ${{ secrets.DISCORD_WEBHOOK_URL }}
+          DISCORD_BOT_NAME: BTC Hourly Report
+          OKX_PROXY: ${{ secrets.OKX_PROXY }}
       - name: ETH price-action fill check
         if: always()   # watch the price-action strategy's pending entries too
         run: python fill_checker.py
