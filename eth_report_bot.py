@@ -68,6 +68,18 @@ RETRY_BACKOFF_SECONDS = 2
 LONG_SCORE_MIN = float(os.environ.get("LONG_SCORE_MIN", 62))   # score >= this -> consider long
 SHORT_SCORE_MAX = float(os.environ.get("SHORT_SCORE_MAX", 45))  # score <= this -> consider short
 ATR_SL_MULT = float(os.environ.get("ATR_SL_MULT", 1.5))         # stop distance = ATR * this
+# Where the stop-loss sits:
+#   "atr"       (default, live) — a fixed ATR_SL_MULT ATRs beyond the entry.
+#   "structure"                 — just beyond the support (long) / resistance
+#                                 (short) level the entry leans on, plus a small
+#                                 STOP_BUFFER_ATR_MULT ATR buffer, so a wick that
+#                                 pokes through a round ATR stop and reverses
+#                                 doesn't take you out. Falls back to the ATR
+#                                 stop when there's no structural level to use.
+# An experiment — leave "atr" for the validated live behaviour; flip to
+# "structure" only under backtest.py to compare.
+STOP_MODE = os.environ.get("STOP_MODE", "atr")
+STOP_BUFFER_ATR_MULT = float(os.environ.get("STOP_BUFFER_ATR_MULT", 0.25))  # structure-stop buffer beyond the level, in ATRs
 MIN_RR = float(os.environ.get("MIN_RR", 1.5))                    # minimum reward:risk to publish a plan
 PULLBACK_ATR_MULT = float(os.environ.get("PULLBACK_ATR_MULT", 0.7))  # how deep a pullback entry to seek, in ATRs
 # How the entry level is placed relative to the current price:
@@ -466,6 +478,28 @@ def _price_action_revalidate(candles_by_tf, direction):
                                         swing_left=PA_SWING_LEFT, swing_right=PA_SWING_RIGHT)
 
 
+def _place_stop(direction, entry, atr_value, nearest_support, nearest_resistance):
+    """
+    Stop-loss price for an entry. STOP_MODE selects the method:
+      * "atr" (default, live) — ATR_SL_MULT ATRs beyond the entry (byte-identical
+        to the original behaviour).
+      * "structure" — just beyond the level the entry leans on (the nearest
+        support for a long / resistance for a short) plus a STOP_BUFFER_ATR_MULT
+        ATR buffer, so a wick that pierces a round ATR stop and reverses doesn't
+        stop you out. Falls back to the ATR stop when there's no such level.
+    Because support <= entry (long) and resistance >= entry (short) by
+    construction, the structure stop always sits on the losing side of the
+    entry, so risk stays positive.
+    """
+    if direction == "long":
+        if STOP_MODE == "structure" and nearest_support is not None:
+            return nearest_support - atr_value * STOP_BUFFER_ATR_MULT
+        return entry - atr_value * ATR_SL_MULT
+    if STOP_MODE == "structure" and nearest_resistance is not None:
+        return nearest_resistance + atr_value * STOP_BUFFER_ATR_MULT
+    return entry + atr_value * ATR_SL_MULT
+
+
 def build_entry_levels(direction, price, atr_value, supports, resistances):
     """
     Place the entry, stop and target for a proposed trade. ENTRY_MODE selects
@@ -479,11 +513,12 @@ def build_entry_levels(direction, price, atr_value, supports, resistances):
       * "breakout" — enter only as price extends further in the signal's
         direction (long above price, short below): continuation, not retrace.
 
-    Stop is always ATR_SL_MULT ATRs beyond the entry. Target is the nearest
-    structural level in front of the entry, or an ATR-projected level giving
-    MIN_RR when there's no structure to aim at. The pullback arm is unchanged
-    from the original inline logic (the 19/75/5 and backtest characterizations
-    pin that), so live behaviour is byte-identical while ENTRY_MODE=pullback.
+    Stop placement is delegated to _place_stop (STOP_MODE = atr | structure).
+    Target is the nearest structural level in front of the entry, or an
+    ATR-projected level giving MIN_RR when there's no structure to aim at. The
+    pullback arm is unchanged from the original inline logic (the 19/75/5 and
+    backtest characterizations pin that), so live behaviour is byte-identical
+    while ENTRY_MODE=pullback and STOP_MODE=atr.
     """
     if direction == "long":
         nearest_support = max([s for s in supports if s < price], default=None)
@@ -499,7 +534,7 @@ def build_entry_levels(direction, price, atr_value, supports, resistances):
             atr_pullback_entry = price - atr_value * PULLBACK_ATR_MULT
             entry = max(atr_pullback_entry, nearest_support) if nearest_support else atr_pullback_entry
             target = nearest_resistance if nearest_resistance else entry + atr_value * ATR_SL_MULT * MIN_RR
-        stop = entry - atr_value * ATR_SL_MULT
+        stop = _place_stop(direction, entry, atr_value, nearest_support, nearest_resistance)
     else:  # short
         nearest_resistance = min([r for r in resistances if r > price], default=None)
         nearest_support = max([s for s in supports if s < price], default=None)
@@ -514,7 +549,7 @@ def build_entry_levels(direction, price, atr_value, supports, resistances):
             atr_pullback_entry = price + atr_value * PULLBACK_ATR_MULT
             entry = min(atr_pullback_entry, nearest_resistance) if nearest_resistance else atr_pullback_entry
             target = nearest_support if nearest_support else entry - atr_value * ATR_SL_MULT * MIN_RR
-        stop = entry + atr_value * ATR_SL_MULT
+        stop = _place_stop(direction, entry, atr_value, nearest_support, nearest_resistance)
     return entry, stop, target
 
 
