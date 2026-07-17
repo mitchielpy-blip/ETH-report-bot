@@ -82,3 +82,4 @@ logged_at_ts,price,direction,entry,stop,target,rr,reason
 1784257253494,74.95,short,75.369,76.26685714285713,74.02221428571428,1.5000000000000158,
 1784260851986,75.19,,,,,,Short signal has held 1h of the 2h needed — waiting to confirm it's not noise.
 1784264451682,75.19,short,75.5945,76.46128571428571,74.29432142857144,1.4999999999999918,
+1784268053543,74.37,,,,,,"Risk:reward is 0.62, below the 1.5 threshold — sitting out this hour."
