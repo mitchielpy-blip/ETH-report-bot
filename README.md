@@ -125,11 +125,17 @@ numbers are even measuring the strategy you think they are.
 ### Reliability
 - Network calls to OKX and Discord retry automatically (up to 3 attempts
   with backoff) instead of silently failing on a hiccup.
-- Consecutive "no entry" hours are suppressed so a choppy market doesn't
-  spam the channel every hour — any active or newly-changed signal always
-  posts. This works by committing a small `state.json` file back to the
-  repo after each run (that's why the workflow needs `contents: write`
-  permission and a commit/push step — already included).
+- The report only posts when the recommendation actually **changes** from
+  the last thing posted — a fresh signal (No-entry → long/short), a flip
+  (long ↔ short), or a stand-down (long/short → No-entry). A one-sided bias
+  can hold for many hours and the indicator re-derives an almost-identical
+  plan each run (only the ATR/price-based entry drifts a few cents); without
+  this, a standing long/short would ping the channel every hour. This works
+  by committing a small `state.json` file back to the repo after each run
+  (that's why the workflow needs `contents: write` permission and a
+  commit/push step — already included). The price-action strategy keeps its
+  own zone-based dedup instead (two distinct zones sharing a direction are
+  different trades and each posts).
 - A still-pending (unfilled) entry is preserved across "no entry" hours
   for up to `PENDING_ENTRY_LIFETIME_HOURS` (default 8h) instead of being
   wiped by the next hourly run, so `fill_checker.py` keeps watching it

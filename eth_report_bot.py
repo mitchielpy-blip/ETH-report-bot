@@ -788,18 +788,48 @@ def pending_order_is_live(state):
     return age_hours <= PENDING_ENTRY_LIFETIME_HOURS
 
 
+# Distinguishes "state file predates the last_posted_direction field" from
+# "we last posted a genuine No-entry (None)". Only the former should fall back
+# to the pending-order direction for the dedup below.
+_LAST_POSTED_UNSET = object()
+
+
 def should_post(plan, previous_state):
     """
-    Only suppress consecutive identical "no entry" reports so a choppy
-    market doesn't spam the channel every hour. Any active directional
-    signal, or a change in direction, always posts.
+    Decide whether this run's report is worth posting, or is just the same
+    signal we already announced (which would spam the channel every hour).
+
+    Indicator strategy: a one-sided bias score can persist for many hours, so
+    suggest_trade_plan re-issues an essentially identical directional plan every
+    run (only the ATR/price-derived entry drifts a few cents). We post only when
+    the directional recommendation *changes* from the last thing we actually
+    posted — a fresh signal (No-entry -> long/short), a flip (long <-> short), or
+    a stand-down (long/short -> No-entry). A standing long/short no longer pings
+    the channel hourly.
+
+    price_action strategy: left on its original rule. Its own suppress_post /
+    zone_id dedup already stops a live zone re-announcing itself, and two
+    distinct zones that happen to share a direction are genuinely different
+    trades that should each post — so same-direction posts are NOT suppressed
+    there.
     """
     # A "no news" no-trade (e.g. the price-action strategy re-seeing a zone it
     # already signalled) never posts, so a pending setup doesn't re-announce
     # itself every run.
     if plan.get("suppress_post"):
         return False
+
     current_direction = plan["direction"]
+
+    if STRATEGY == "indicator":
+        last_posted = previous_state.get("last_posted_direction", _LAST_POSTED_UNSET)
+        if last_posted is _LAST_POSTED_UNSET:
+            # State written before this field existed: approximate the last
+            # posted direction with the pending-order direction so the first
+            # run after deploy doesn't re-post a still-standing signal.
+            last_posted = previous_state.get("direction")
+        return current_direction != last_posted
+
     previous_direction = previous_state.get("direction")
     if current_direction is None and previous_direction is None:
         return False
@@ -887,10 +917,11 @@ def main():
 
     log_signal(price, plan)
 
-    if should_post(plan, previous_state):
+    posted = should_post(plan, previous_state)
+    if posted:
         post_to_discord(report)
     else:
-        print("No change from previous no-entry signal — skipping post to avoid noise.")
+        print("No change from the previously posted signal — skipping post to avoid noise.")
 
     # --- State handling (audit fix) ---
     # A new directional plan always replaces whatever was pending.
@@ -919,6 +950,16 @@ def main():
               f"(within its {PENDING_ENTRY_LIFETIME_HOURS:.0f}h fill window).")
     else:
         new_state = {"direction": None, "last_raw_direction": plan.get("raw_direction")}
+
+    # Remember what we actually posted this run so next run's should_post can
+    # tell a genuinely new/changed signal from an unchanged standing one. If we
+    # didn't post, carry the previous value forward unchanged (falling back to
+    # the pending-order direction for pre-existing state files).
+    if posted:
+        new_state["last_posted_direction"] = plan["direction"]
+    else:
+        new_state["last_posted_direction"] = previous_state.get(
+            "last_posted_direction", previous_state.get("direction"))
 
     save_state(new_state)
 
