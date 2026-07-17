@@ -650,6 +650,7 @@ def build_report(candles, previous_raw_direction=None):
     # display line below.
     score = compute_bias_score(candles)
     vol_ratio = volume_ratio(candles)
+    atr_value = atr(candles)  # the ruler that sizes the entry/stop/target distances below
 
     nearest_support = max([s for s in supports if s < price], default=supports[0] if supports else None)
     nearest_resistance = min([res for res in resistances if res > price], default=resistances[0] if resistances else None)
@@ -671,6 +672,8 @@ def build_report(candles, previous_raw_direction=None):
     if vol_ratio is not None:
         vol_label = "confirming" if vol_ratio >= VOLUME_CONFIRM_RATIO else ("weak" if vol_ratio <= VOLUME_LOW_RATIO else "normal")
         lines.append(f"Volume: {vol_ratio:.2f}x average ({vol_label})")
+    if atr_value:
+        lines.append(f"ATR(14): ${atr_value:,.2f} ({atr_value / price * 100:.1f}% of price) — sizes entry/stop/target; stop sits {ATR_SL_MULT:g}x ATR away")
     lines.append(f"RSI(14): {r:.1f}" if r else "RSI: insufficient data")
     lines.append(f"MACD histogram: {hist:+.2f}")
     lines.append(f"Bias score: {score}/100 (a rough heuristic, not a win rate)")
@@ -713,10 +716,13 @@ def build_price_action_report(candles_by_tf, previous_state=None):
     trend = pa.swing_trend(c4h, PA_SWING_LEFT, PA_SWING_RIGHT)
     trend_label = {"bullish": "bullish (HH/HL) — longs only",
                    "bearish": "bearish (LH/LL) — shorts only"}.get(trend, "ranging — stand aside")
+    atr_1h = atr(c1h)  # 1H volatility — sizes the impulse threshold and the zone-stop buffer
 
     lines = []
     lines.append(f"**{ASSET} Price-Action Report · {datetime.now(SGT).strftime('%Y-%m-%d %H:%M')} SGT**")
     lines.append(f"Price: ${price:,.2f} (last completed {PA_TIMEFRAMES['5m']} close)")
+    if atr_1h:
+        lines.append(f"ATR({PA_TIMEFRAMES['1H']}): ${atr_1h:,.2f} ({atr_1h / price * 100:.1f}% of price) — sizes the zone & stop buffer")
     lines.append(f"1. Trend ({PA_TIMEFRAMES['4H']}): {trend_label}")
     if plan.get("zone"):
         zl, zh = plan["zone"]
