@@ -68,18 +68,6 @@ RETRY_BACKOFF_SECONDS = 2
 LONG_SCORE_MIN = float(os.environ.get("LONG_SCORE_MIN", 62))   # score >= this -> consider long
 SHORT_SCORE_MAX = float(os.environ.get("SHORT_SCORE_MAX", 45))  # score <= this -> consider short
 ATR_SL_MULT = float(os.environ.get("ATR_SL_MULT", 1.5))         # stop distance = ATR * this
-# Where the stop-loss sits:
-#   "atr"       (default, live) — a fixed ATR_SL_MULT ATRs beyond the entry.
-#   "structure"                 — just beyond the support (long) / resistance
-#                                 (short) level the entry leans on, plus a small
-#                                 STOP_BUFFER_ATR_MULT ATR buffer, so a wick that
-#                                 pokes through a round ATR stop and reverses
-#                                 doesn't take you out. Falls back to the ATR
-#                                 stop when there's no structural level to use.
-# An experiment — leave "atr" for the validated live behaviour; flip to
-# "structure" only under backtest.py to compare.
-STOP_MODE = os.environ.get("STOP_MODE", "atr")
-STOP_BUFFER_ATR_MULT = float(os.environ.get("STOP_BUFFER_ATR_MULT", 0.25))  # structure-stop buffer beyond the level, in ATRs
 MIN_RR = float(os.environ.get("MIN_RR", 1.5))                    # minimum reward:risk to publish a plan
 PULLBACK_ATR_MULT = float(os.environ.get("PULLBACK_ATR_MULT", 0.7))  # how deep a pullback entry to seek, in ATRs
 # How the entry level is placed relative to the current price:
@@ -97,30 +85,8 @@ ENTRY_MODE = os.environ.get("ENTRY_MODE", "pullback")
 # staying solidly positive (+0.335R / +0.293R). See pullback_sweep.csv for the
 # full comparison across 1.0/0.7/0.5/0.3 if this ever needs revisiting.
 ADX_MIN = float(os.environ.get("ADX_MIN", 20))                        # skip trades when trend strength is below this
-# Persistence filter: how many consecutive hourly reports the raw bias
-# direction must hold before a trade may fire. The idea is that a score
-# flickering to "long" for a single hour and vanishing is more likely noise
-# than a real setup, so we wait for confirmation.
-#   2 (default, live) — the current behaviour: the signal must appear one hour
-#       and still be there the next before it can trade.
-#   1                 — no wait: fire the first hour the signal appears.
-#   3+                — stricter: require that many consecutive hours first.
-# An experiment knob — leave at 2 for the validated live behaviour; sweep other
-# values only under backtest.py.
-PERSIST_HOURS = int(os.environ.get("PERSIST_HOURS", 2))
 VOLUME_CONFIRM_RATIO = float(os.environ.get("VOLUME_CONFIRM_RATIO", 1.2))  # above-average volume amplifies conviction
 VOLUME_LOW_RATIO = float(os.environ.get("VOLUME_LOW_RATIO", 0.7))          # below-average volume dampens conviction
-# How RSI feeds the bias score:
-#   "momentum" (default, live) — linear: the higher the RSI, the more bullish,
-#       so conviction keeps building even into overbought (a trend-following read).
-#   "fade"                     — momentum inside the RSI_FADE_BAND around 50, but
-#       beyond it the contribution fades back and eventually reverses, so an
-#       overbought RSI stops adding to (and then subtracts from) long conviction
-#       (a mean-reversion-at-extremes read). An experiment — leave "momentum"
-#       for the validated live behaviour; flip to "fade" only under backtest.py.
-RSI_MODE = os.environ.get("RSI_MODE", "momentum")
-RSI_FADE_BAND = float(os.environ.get("RSI_FADE_BAND", 20))    # +/- around 50 (i.e. 30..70) where RSI still reads as momentum
-RSI_FADE_SLOPE = float(os.environ.get("RSI_FADE_SLOPE", 0.4))  # how fast the contribution fades once past the band
 
 # How long a pending (unfilled) pullback entry stays live before being
 # discarded. Keep this equal to the backtest's ENTRY_WAIT_CANDLES (in
@@ -395,25 +361,6 @@ def support_resistance(candles, lookback=40, n_levels=3):
     return supports, resistances
 
 
-def _rsi_contribution(r):
-    """
-    RSI's contribution to the bias score. RSI_MODE selects the shape:
-      * "momentum" (default) — linear (r - 50) * 0.4, so conviction keeps
-        rising with RSI even into overbought (byte-identical to the original).
-      * "fade" — the same slope inside +/- RSI_FADE_BAND of 50, but past the
-        band the contribution fades at RSI_FADE_SLOPE and then flips sign, so a
-        very overbought RSI reads as a (mild) reversal rather than more upside.
-    """
-    if RSI_MODE != "fade":
-        return (r - 50) * 0.4
-    dev = r - 50
-    if abs(dev) <= RSI_FADE_BAND:
-        return dev * 0.4
-    edge = RSI_FADE_BAND * 0.4                     # contribution at the band edge
-    faded = edge - (abs(dev) - RSI_FADE_BAND) * RSI_FADE_SLOPE
-    return faded if dev > 0 else -faded
-
-
 def compute_bias_score(candles):
     """
     Heuristic 0-100 bias score (clamped to 5-95) from completed candles.
@@ -433,7 +380,7 @@ def compute_bias_score(candles):
 
     score = 50
     if r is not None:
-        score += _rsi_contribution(r)
+        score += (r - 50) * 0.4
     score += 15 if ema20 > ema50 else -15
     score += 10 if hist > 0 else -10
 
@@ -519,28 +466,6 @@ def _price_action_revalidate(candles_by_tf, direction):
                                         swing_left=PA_SWING_LEFT, swing_right=PA_SWING_RIGHT)
 
 
-def _place_stop(direction, entry, atr_value, nearest_support, nearest_resistance):
-    """
-    Stop-loss price for an entry. STOP_MODE selects the method:
-      * "atr" (default, live) — ATR_SL_MULT ATRs beyond the entry (byte-identical
-        to the original behaviour).
-      * "structure" — just beyond the level the entry leans on (the nearest
-        support for a long / resistance for a short) plus a STOP_BUFFER_ATR_MULT
-        ATR buffer, so a wick that pierces a round ATR stop and reverses doesn't
-        stop you out. Falls back to the ATR stop when there's no such level.
-    Because support <= entry (long) and resistance >= entry (short) by
-    construction, the structure stop always sits on the losing side of the
-    entry, so risk stays positive.
-    """
-    if direction == "long":
-        if STOP_MODE == "structure" and nearest_support is not None:
-            return nearest_support - atr_value * STOP_BUFFER_ATR_MULT
-        return entry - atr_value * ATR_SL_MULT
-    if STOP_MODE == "structure" and nearest_resistance is not None:
-        return nearest_resistance + atr_value * STOP_BUFFER_ATR_MULT
-    return entry + atr_value * ATR_SL_MULT
-
-
 def build_entry_levels(direction, price, atr_value, supports, resistances):
     """
     Place the entry, stop and target for a proposed trade. ENTRY_MODE selects
@@ -554,12 +479,11 @@ def build_entry_levels(direction, price, atr_value, supports, resistances):
       * "breakout" — enter only as price extends further in the signal's
         direction (long above price, short below): continuation, not retrace.
 
-    Stop placement is delegated to _place_stop (STOP_MODE = atr | structure).
-    Target is the nearest structural level in front of the entry, or an
-    ATR-projected level giving MIN_RR when there's no structure to aim at. The
-    pullback arm is unchanged from the original inline logic (the 19/75/5 and
-    backtest characterizations pin that), so live behaviour is byte-identical
-    while ENTRY_MODE=pullback and STOP_MODE=atr.
+    The stop sits ATR_SL_MULT ATRs beyond the entry. Target is the nearest
+    structural level in front of the entry, or an ATR-projected level giving
+    MIN_RR when there's no structure to aim at. The pullback arm is unchanged
+    from the original inline logic (the 19/75/5 and backtest characterizations
+    pin that), so live behaviour is byte-identical while ENTRY_MODE=pullback.
     """
     if direction == "long":
         nearest_support = max([s for s in supports if s < price], default=None)
@@ -575,7 +499,7 @@ def build_entry_levels(direction, price, atr_value, supports, resistances):
             atr_pullback_entry = price - atr_value * PULLBACK_ATR_MULT
             entry = max(atr_pullback_entry, nearest_support) if nearest_support else atr_pullback_entry
             target = nearest_resistance if nearest_resistance else entry + atr_value * ATR_SL_MULT * MIN_RR
-        stop = _place_stop(direction, entry, atr_value, nearest_support, nearest_resistance)
+        stop = entry - atr_value * ATR_SL_MULT
     else:  # short
         nearest_resistance = min([r for r in resistances if r > price], default=None)
         nearest_support = max([s for s in supports if s < price], default=None)
@@ -590,23 +514,22 @@ def build_entry_levels(direction, price, atr_value, supports, resistances):
             atr_pullback_entry = price + atr_value * PULLBACK_ATR_MULT
             entry = min(atr_pullback_entry, nearest_resistance) if nearest_resistance else atr_pullback_entry
             target = nearest_support if nearest_support else entry - atr_value * ATR_SL_MULT * MIN_RR
-        stop = _place_stop(direction, entry, atr_value, nearest_support, nearest_resistance)
+        stop = entry + atr_value * ATR_SL_MULT
     return entry, stop, target
 
 
-def suggest_trade_plan(price, score, atr_value, supports, resistances, htf_trend=None, adx_value=None, previous_raw_direction=None, previous_raw_streak=0):
+def suggest_trade_plan(price, score, atr_value, supports, resistances, htf_trend=None, adx_value=None, previous_raw_direction=None):
     """
     Rule-based entry/SL/TP suggestion. Returns a dict, or None if no setup
     clears the minimum reward:risk bar (mirrors "RR不合格，不開倉" logic).
 
     Direction is only proposed when the bias score is clearly one-sided,
-    the same raw direction has held for PERSIST_HOURS consecutive hours (a
-    persistence filter — a score that flickers to "long" for one hour and
-    disappears is more likely noise than a real setup), the ADX and
+    it agrees with the same raw direction from the previous hour (a
+    persistence filter — a score that flickers to "long" for one hour
+    and disappears is more likely noise than a real setup), the ADX and
     higher-timeframe checks pass, and the resulting reward:risk clears
-    MIN_RR. Every return includes "raw_direction" and "raw_streak" so the
-    caller can track them for next hour's persistence check, even when no
-    trade results.
+    MIN_RR. Every return includes "raw_direction" so the caller can track
+    it for next hour's persistence check, even when no trade results.
     """
     if score >= LONG_SCORE_MIN:
         raw_direction = "long"
@@ -615,31 +538,21 @@ def suggest_trade_plan(price, score, atr_value, supports, resistances, htf_trend
     else:
         raw_direction = None
 
-    # Run-length of the current raw direction, including this hour. Counted from
-    # the raw score alone (independent of the ADX/HTF/RR gates) so an off hour on
-    # one of those doesn't reset a genuinely persistent signal.
     if raw_direction is None:
-        raw_streak = 0
-    elif previous_raw_direction == raw_direction:
-        raw_streak = previous_raw_streak + 1
-    else:
-        raw_streak = 1
-
-    if raw_direction is None:
-        return {"direction": None, "reason": "Signal isn't clear enough (score is in the neutral zone) — sitting out this hour.", "raw_direction": None, "raw_streak": 0}
+        return {"direction": None, "reason": "Signal isn't clear enough (score is in the neutral zone) — sitting out this hour.", "raw_direction": None}
 
     if adx_value is not None and adx_value < ADX_MIN:
-        return {"direction": None, "reason": f"ADX {adx_value:.1f} is below {ADX_MIN} — market looks flat/choppy, sitting out.", "raw_direction": raw_direction, "raw_streak": raw_streak}
+        return {"direction": None, "reason": f"ADX {adx_value:.1f} is below {ADX_MIN} — market looks flat/choppy, sitting out.", "raw_direction": raw_direction}
 
-    if raw_streak < PERSIST_HOURS:
-        return {"direction": None, "reason": f"{raw_direction.capitalize()} signal has held {raw_streak}h of the {PERSIST_HOURS}h needed — waiting to confirm it's not noise.", "raw_direction": raw_direction, "raw_streak": raw_streak}
+    if previous_raw_direction != raw_direction:
+        return {"direction": None, "reason": f"{raw_direction.capitalize()} signal just appeared this hour — waiting one more hour to confirm it's not noise.", "raw_direction": raw_direction}
 
     direction = raw_direction
 
     if htf_trend == "bearish" and direction == "long":
-        return {"direction": None, "reason": f"{HTF_BAR} trend is bearish — skipping long to avoid fighting the higher timeframe.", "raw_direction": raw_direction, "raw_streak": raw_streak}
+        return {"direction": None, "reason": f"{HTF_BAR} trend is bearish — skipping long to avoid fighting the higher timeframe.", "raw_direction": raw_direction}
     if htf_trend == "bullish" and direction == "short":
-        return {"direction": None, "reason": f"{HTF_BAR} trend is bullish — skipping short to avoid fighting the higher timeframe.", "raw_direction": raw_direction, "raw_streak": raw_streak}
+        return {"direction": None, "reason": f"{HTF_BAR} trend is bullish — skipping short to avoid fighting the higher timeframe.", "raw_direction": raw_direction}
 
     entry, stop, target = build_entry_levels(direction, price, atr_value, supports, resistances)
     if direction == "long":
@@ -650,7 +563,7 @@ def suggest_trade_plan(price, score, atr_value, supports, resistances, htf_trend
         reward = entry - target
 
     if risk <= 0 or reward <= 0:
-        return {"direction": None, "reason": "Couldn't compute a sane risk:reward — sitting out this hour.", "raw_direction": raw_direction, "raw_streak": raw_streak}
+        return {"direction": None, "reason": "Couldn't compute a sane risk:reward — sitting out this hour.", "raw_direction": raw_direction}
 
     rr = reward / risk
     # Gate on the R:R as it's actually shown (rounded to 2dp), so a setup the
@@ -658,7 +571,7 @@ def suggest_trade_plan(price, score, atr_value, supports, resistances, htf_trend
     # 1.497. Without this, a true R:R just under the threshold rounds up on
     # screen and looks like a rejected 1.50, which is confusing.
     if round(rr, 2) < MIN_RR:
-        return {"direction": None, "reason": f"Risk:reward is {rr:.2f}, below the {MIN_RR} threshold — sitting out this hour.", "raw_direction": raw_direction, "raw_streak": raw_streak}
+        return {"direction": None, "reason": f"Risk:reward is {rr:.2f}, below the {MIN_RR} threshold — sitting out this hour.", "raw_direction": raw_direction}
 
     return {
         "direction": direction,
@@ -667,7 +580,6 @@ def suggest_trade_plan(price, score, atr_value, supports, resistances, htf_trend
         "target": target,
         "rr": rr,
         "raw_direction": raw_direction,
-        "raw_streak": raw_streak,
     }
 
 
@@ -681,7 +593,7 @@ _PA_UNSET = object()
 
 
 def evaluate_plan(candles, previous_raw_direction=None, htf_trend=_HTF_UNSET,
-                  candles_by_tf=_PA_UNSET, previous_state=None, previous_raw_streak=0):
+                  candles_by_tf=_PA_UNSET, previous_state=None):
     """
     Derive the trade plan for a completed-candle series — the decision half of
     build_report, without any of the report formatting.
@@ -718,11 +630,10 @@ def evaluate_plan(candles, previous_raw_direction=None, htf_trend=_HTF_UNSET,
     if htf_trend is _HTF_UNSET:
         htf_trend = higher_timeframe_trend()
     return suggest_trade_plan(price, score, atr_value, supports, resistances,
-                              htf_trend, adx_value, previous_raw_direction,
-                              previous_raw_streak)
+                              htf_trend, adx_value, previous_raw_direction)
 
 
-def build_report(candles, previous_raw_direction=None, previous_raw_streak=0):
+def build_report(candles, previous_raw_direction=None):
     closes = [c["close"] for c in candles]
     price = closes[-1]
     r = rsi(closes)
@@ -747,8 +658,7 @@ def build_report(candles, previous_raw_direction=None, previous_raw_streak=0):
     # re-check and the backtest use). We pass the HTF read we just fetched so
     # it isn't fetched twice.
     htf_trend = higher_timeframe_trend()
-    plan = evaluate_plan(candles, previous_raw_direction, htf_trend=htf_trend,
-                         previous_raw_streak=previous_raw_streak)
+    plan = evaluate_plan(candles, previous_raw_direction, htf_trend=htf_trend)
 
     lines = []
     lines.append(f"**{ASSET} Hourly Report · {datetime.now(SGT).strftime('%Y-%m-%d %H:%M')} SGT**")
@@ -968,8 +878,7 @@ def main():
         if len(candles) < 30:
             print("Not enough candle data returned.", file=sys.stderr)
             sys.exit(1)
-        report, plan = build_report(candles, previous_state.get("last_raw_direction"),
-                                    previous_state.get("last_raw_streak", 0))
+        report, plan = build_report(candles, previous_state.get("last_raw_direction"))
         price = candles[-1]["close"]
 
     print("--- Generated report (always logged here, whether or not it posts) ---")
@@ -992,7 +901,6 @@ def main():
         new_state = {
             "direction": plan["direction"],
             "last_raw_direction": plan.get("raw_direction"),
-            "last_raw_streak": plan.get("raw_streak", 0),
             "entry": plan["entry"],
             "stop": plan["stop"],
             "target": plan["target"],
@@ -1007,12 +915,10 @@ def main():
     elif pending_order_is_live(previous_state):
         new_state = dict(previous_state)
         new_state["last_raw_direction"] = plan.get("raw_direction")
-        new_state["last_raw_streak"] = plan.get("raw_streak", 0)
         print(f"Keeping pending {previous_state['direction']} entry at {previous_state['entry']} alive "
               f"(within its {PENDING_ENTRY_LIFETIME_HOURS:.0f}h fill window).")
     else:
-        new_state = {"direction": None, "last_raw_direction": plan.get("raw_direction"),
-                     "last_raw_streak": plan.get("raw_streak", 0)}
+        new_state = {"direction": None, "last_raw_direction": plan.get("raw_direction")}
 
     save_state(new_state)
 

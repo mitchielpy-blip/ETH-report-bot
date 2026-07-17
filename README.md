@@ -116,11 +116,8 @@ numbers are even measuring the strategy you think they are.
 ### How the trade plan is built (all tunable via env vars)
 - **Direction**: only proposed when the bias score is clearly one-sided
   (`LONG_SCORE_MIN` / `SHORT_SCORE_MAX`, default 62 / 38). Middling scores
-  → no plan. Also requires the same raw direction to persist for
-  `PERSIST_HOURS` consecutive hours before acting (default 2), as a noise
-  filter. Set `PERSIST_HOURS=1` to fire on first appearance (no wait) or
-  higher for a stricter confirmation — an experiment knob; leave at 2 for
-  the validated live behaviour and sweep other values under `backtest.py`.
+  → no plan. Also requires the same raw direction to persist for two
+  consecutive hours before acting, as a noise filter.
 - **Higher-timeframe filter**: if the 4H trend disagrees with the proposed
   direction, the plan is dropped (change with `HTF_BAR`, default `4H`).
 - **Trend-strength filter**: if ADX(14) is below `ADX_MIN` (default 20),

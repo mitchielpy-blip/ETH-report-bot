@@ -31,26 +31,6 @@ on:
         description: "Minimum ADX to allow a trade (higher = stricter trend-strength filter)"
         required: false
         default: "20"
-      persist_hours:
-        description: "Consecutive hours the raw signal must hold before firing (1 = no wait, 2 = current, 3 = stricter). Indicator strategy only."
-        required: false
-        default: "2"
-      stop_mode:
-        description: "Stop-loss placement: atr (fixed ATR distance) or structure (beyond the S/R level). Indicator strategy only."
-        required: false
-        default: "atr"
-        type: choice
-        options:
-          - atr
-          - structure
-      rsi_mode:
-        description: "How RSI feeds the score: momentum (linear) or fade (mean-reversion at extremes). Indicator strategy only."
-        required: false
-        default: "momentum"
-        type: choice
-        options:
-          - momentum
-          - fade
 
 jobs:
   backtest:
@@ -71,9 +51,6 @@ jobs:
         env:
           STRATEGY: ${{ github.event.inputs.strategy }}
           ADX_MIN: ${{ github.event.inputs.adx_min }}   # indicator strategy only
-          PERSIST_HOURS: ${{ github.event.inputs.persist_hours }}   # indicator strategy only
-          STOP_MODE: ${{ github.event.inputs.stop_mode }}   # indicator strategy only
-          RSI_MODE: ${{ github.event.inputs.rsi_mode }}   # indicator strategy only
           OKX_PROXY: ${{ secrets.OKX_PROXY }}   # proxy OKX calls past the runner's geo-block
       - name: Upload results
         uses: actions/upload-artifact@v4

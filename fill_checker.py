@@ -87,13 +87,7 @@ def main():
         # the common "not filled yet" path a single cheap ticker call.
         fresh = bot._price_action_revalidate(bot.fetch_timeframes(), direction)
     else:
-        # previous_raw_streak = PERSIST_HOURS - 1 so the persistence gate reduces
-        # to a pure "does the raw signal still agree?" check: if it does, the
-        # streak reaches the threshold and passes; if it has flipped/gone
-        # neutral, it resets and fails — which is exactly the invalidation we
-        # want here (not a fresh multi-hour re-confirmation).
-        fresh = bot.evaluate_plan(bot.fetch_candles(), previous_raw_direction=direction,
-                                  previous_raw_streak=max(bot.PERSIST_HOURS - 1, 0))
+        fresh = bot.evaluate_plan(bot.fetch_candles(), previous_raw_direction=direction)
     if not fresh or fresh.get("direction") != direction:
         if not fresh:
             reason = "insufficient data to re-evaluate"
