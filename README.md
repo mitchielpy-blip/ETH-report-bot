@@ -21,8 +21,9 @@ numbers are even measuring the strategy you think they are.
 > *single* 12-month window that happened to land on a soft patch. Re-tested
 > across three independent windows at `ADX_MIN` 20, BTC is net-positive in
 > every one and never had a losing full window:
-> - Recent 12mo (2025-07→2026-07): 66 trades, +0.25R net — but halves
->   −0.04R / +0.55R (all the edge in the back half).
+> - Recent 12mo (2025-07→2026-07): 66 trades, **53.1% win rate**, +0.25R net
+>   — but halves −0.04R / +0.55R (win-rate halves 41.9% / 63.6%; all the edge
+>   in the back half). Re-run 2026-07-17; max drawdown 8.1%.
 > - Prior 12mo (2024-07→2025-07): 52 trades, +0.23R net, halves
 >   +0.29R / +0.17R — **both positive, passes the split cleanly**.
 > - 18mo (2025-01→2026-07): 101 trades, +0.19R net, halves +0.03R / +0.34R.
@@ -34,6 +35,14 @@ numbers are even measuring the strategy you think they are.
 > **dead** (only ~9 fully-aligned setups in a year, 0 wins), so BTC runs the
 > indicator strategy only. Raising `ADX_MIN` (25/30) only hurt BTC, so the
 > default 20 is kept.
+>
+> **All-three snapshot, same trailing-12mo window (re-run 2026-07-17):** on
+> one consistent recent window, SOL 63.2% win / +0.56R (68 trades), ETH 55.7%
+> win / +0.39R (61), BTC 53.1% win / +0.25R (66). BTC is the weakest on every
+> axis (win rate, expectancy, and ~2x the drawdown). All three shared the same
+> weak-first-half / strong-second-half shape this window (they're correlated),
+> so these trailing numbers are flattered by the back half — don't read the
+> headline win rate as a steady-state rate.
 >
 > **SOL added + short gate loosened 2026-07-14.** Two changes, both
 > validated on 12-month 1H backtests before going live:
