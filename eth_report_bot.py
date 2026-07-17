@@ -97,6 +97,17 @@ ENTRY_MODE = os.environ.get("ENTRY_MODE", "pullback")
 # staying solidly positive (+0.335R / +0.293R). See pullback_sweep.csv for the
 # full comparison across 1.0/0.7/0.5/0.3 if this ever needs revisiting.
 ADX_MIN = float(os.environ.get("ADX_MIN", 20))                        # skip trades when trend strength is below this
+# Persistence filter: how many consecutive hourly reports the raw bias
+# direction must hold before a trade may fire. The idea is that a score
+# flickering to "long" for a single hour and vanishing is more likely noise
+# than a real setup, so we wait for confirmation.
+#   2 (default, live) — the current behaviour: the signal must appear one hour
+#       and still be there the next before it can trade.
+#   1                 — no wait: fire the first hour the signal appears.
+#   3+                — stricter: require that many consecutive hours first.
+# An experiment knob — leave at 2 for the validated live behaviour; sweep other
+# values only under backtest.py.
+PERSIST_HOURS = int(os.environ.get("PERSIST_HOURS", 2))
 VOLUME_CONFIRM_RATIO = float(os.environ.get("VOLUME_CONFIRM_RATIO", 1.2))  # above-average volume amplifies conviction
 VOLUME_LOW_RATIO = float(os.environ.get("VOLUME_LOW_RATIO", 0.7))          # below-average volume dampens conviction
 # How RSI feeds the bias score:
@@ -583,18 +594,19 @@ def build_entry_levels(direction, price, atr_value, supports, resistances):
     return entry, stop, target
 
 
-def suggest_trade_plan(price, score, atr_value, supports, resistances, htf_trend=None, adx_value=None, previous_raw_direction=None):
+def suggest_trade_plan(price, score, atr_value, supports, resistances, htf_trend=None, adx_value=None, previous_raw_direction=None, previous_raw_streak=0):
     """
     Rule-based entry/SL/TP suggestion. Returns a dict, or None if no setup
     clears the minimum reward:risk bar (mirrors "RR不合格，不開倉" logic).
 
     Direction is only proposed when the bias score is clearly one-sided,
-    it agrees with the same raw direction from the previous hour (a
-    persistence filter — a score that flickers to "long" for one hour
-    and disappears is more likely noise than a real setup), the ADX and
+    the same raw direction has held for PERSIST_HOURS consecutive hours (a
+    persistence filter — a score that flickers to "long" for one hour and
+    disappears is more likely noise than a real setup), the ADX and
     higher-timeframe checks pass, and the resulting reward:risk clears
-    MIN_RR. Every return includes "raw_direction" so the caller can track
-    it for next hour's persistence check, even when no trade results.
+    MIN_RR. Every return includes "raw_direction" and "raw_streak" so the
+    caller can track them for next hour's persistence check, even when no
+    trade results.
     """
     if score >= LONG_SCORE_MIN:
         raw_direction = "long"
@@ -603,21 +615,31 @@ def suggest_trade_plan(price, score, atr_value, supports, resistances, htf_trend
     else:
         raw_direction = None
 
+    # Run-length of the current raw direction, including this hour. Counted from
+    # the raw score alone (independent of the ADX/HTF/RR gates) so an off hour on
+    # one of those doesn't reset a genuinely persistent signal.
     if raw_direction is None:
-        return {"direction": None, "reason": "Signal isn't clear enough (score is in the neutral zone) — sitting out this hour.", "raw_direction": None}
+        raw_streak = 0
+    elif previous_raw_direction == raw_direction:
+        raw_streak = previous_raw_streak + 1
+    else:
+        raw_streak = 1
+
+    if raw_direction is None:
+        return {"direction": None, "reason": "Signal isn't clear enough (score is in the neutral zone) — sitting out this hour.", "raw_direction": None, "raw_streak": 0}
 
     if adx_value is not None and adx_value < ADX_MIN:
-        return {"direction": None, "reason": f"ADX {adx_value:.1f} is below {ADX_MIN} — market looks flat/choppy, sitting out.", "raw_direction": raw_direction}
+        return {"direction": None, "reason": f"ADX {adx_value:.1f} is below {ADX_MIN} — market looks flat/choppy, sitting out.", "raw_direction": raw_direction, "raw_streak": raw_streak}
 
-    if previous_raw_direction != raw_direction:
-        return {"direction": None, "reason": f"{raw_direction.capitalize()} signal just appeared this hour — waiting one more hour to confirm it's not noise.", "raw_direction": raw_direction}
+    if raw_streak < PERSIST_HOURS:
+        return {"direction": None, "reason": f"{raw_direction.capitalize()} signal has held {raw_streak}h of the {PERSIST_HOURS}h needed — waiting to confirm it's not noise.", "raw_direction": raw_direction, "raw_streak": raw_streak}
 
     direction = raw_direction
 
     if htf_trend == "bearish" and direction == "long":
-        return {"direction": None, "reason": f"{HTF_BAR} trend is bearish — skipping long to avoid fighting the higher timeframe.", "raw_direction": raw_direction}
+        return {"direction": None, "reason": f"{HTF_BAR} trend is bearish — skipping long to avoid fighting the higher timeframe.", "raw_direction": raw_direction, "raw_streak": raw_streak}
     if htf_trend == "bullish" and direction == "short":
-        return {"direction": None, "reason": f"{HTF_BAR} trend is bullish — skipping short to avoid fighting the higher timeframe.", "raw_direction": raw_direction}
+        return {"direction": None, "reason": f"{HTF_BAR} trend is bullish — skipping short to avoid fighting the higher timeframe.", "raw_direction": raw_direction, "raw_streak": raw_streak}
 
     entry, stop, target = build_entry_levels(direction, price, atr_value, supports, resistances)
     if direction == "long":
@@ -628,7 +650,7 @@ def suggest_trade_plan(price, score, atr_value, supports, resistances, htf_trend
         reward = entry - target
 
     if risk <= 0 or reward <= 0:
-        return {"direction": None, "reason": "Couldn't compute a sane risk:reward — sitting out this hour.", "raw_direction": raw_direction}
+        return {"direction": None, "reason": "Couldn't compute a sane risk:reward — sitting out this hour.", "raw_direction": raw_direction, "raw_streak": raw_streak}
 
     rr = reward / risk
     # Gate on the R:R as it's actually shown (rounded to 2dp), so a setup the
@@ -636,7 +658,7 @@ def suggest_trade_plan(price, score, atr_value, supports, resistances, htf_trend
     # 1.497. Without this, a true R:R just under the threshold rounds up on
     # screen and looks like a rejected 1.50, which is confusing.
     if round(rr, 2) < MIN_RR:
-        return {"direction": None, "reason": f"Risk:reward is {rr:.2f}, below the {MIN_RR} threshold — sitting out this hour.", "raw_direction": raw_direction}
+        return {"direction": None, "reason": f"Risk:reward is {rr:.2f}, below the {MIN_RR} threshold — sitting out this hour.", "raw_direction": raw_direction, "raw_streak": raw_streak}
 
     return {
         "direction": direction,
@@ -645,6 +667,7 @@ def suggest_trade_plan(price, score, atr_value, supports, resistances, htf_trend
         "target": target,
         "rr": rr,
         "raw_direction": raw_direction,
+        "raw_streak": raw_streak,
     }
 
 
@@ -658,7 +681,7 @@ _PA_UNSET = object()
 
 
 def evaluate_plan(candles, previous_raw_direction=None, htf_trend=_HTF_UNSET,
-                  candles_by_tf=_PA_UNSET, previous_state=None):
+                  candles_by_tf=_PA_UNSET, previous_state=None, previous_raw_streak=0):
     """
     Derive the trade plan for a completed-candle series — the decision half of
     build_report, without any of the report formatting.
@@ -695,10 +718,11 @@ def evaluate_plan(candles, previous_raw_direction=None, htf_trend=_HTF_UNSET,
     if htf_trend is _HTF_UNSET:
         htf_trend = higher_timeframe_trend()
     return suggest_trade_plan(price, score, atr_value, supports, resistances,
-                              htf_trend, adx_value, previous_raw_direction)
+                              htf_trend, adx_value, previous_raw_direction,
+                              previous_raw_streak)
 
 
-def build_report(candles, previous_raw_direction=None):
+def build_report(candles, previous_raw_direction=None, previous_raw_streak=0):
     closes = [c["close"] for c in candles]
     price = closes[-1]
     r = rsi(closes)
@@ -723,7 +747,8 @@ def build_report(candles, previous_raw_direction=None):
     # re-check and the backtest use). We pass the HTF read we just fetched so
     # it isn't fetched twice.
     htf_trend = higher_timeframe_trend()
-    plan = evaluate_plan(candles, previous_raw_direction, htf_trend=htf_trend)
+    plan = evaluate_plan(candles, previous_raw_direction, htf_trend=htf_trend,
+                         previous_raw_streak=previous_raw_streak)
 
     lines = []
     lines.append(f"**{ASSET} Hourly Report · {datetime.now(SGT).strftime('%Y-%m-%d %H:%M')} SGT**")
@@ -943,7 +968,8 @@ def main():
         if len(candles) < 30:
             print("Not enough candle data returned.", file=sys.stderr)
             sys.exit(1)
-        report, plan = build_report(candles, previous_state.get("last_raw_direction"))
+        report, plan = build_report(candles, previous_state.get("last_raw_direction"),
+                                    previous_state.get("last_raw_streak", 0))
         price = candles[-1]["close"]
 
     print("--- Generated report (always logged here, whether or not it posts) ---")
@@ -966,6 +992,7 @@ def main():
         new_state = {
             "direction": plan["direction"],
             "last_raw_direction": plan.get("raw_direction"),
+            "last_raw_streak": plan.get("raw_streak", 0),
             "entry": plan["entry"],
             "stop": plan["stop"],
             "target": plan["target"],
@@ -980,10 +1007,12 @@ def main():
     elif pending_order_is_live(previous_state):
         new_state = dict(previous_state)
         new_state["last_raw_direction"] = plan.get("raw_direction")
+        new_state["last_raw_streak"] = plan.get("raw_streak", 0)
         print(f"Keeping pending {previous_state['direction']} entry at {previous_state['entry']} alive "
               f"(within its {PENDING_ENTRY_LIFETIME_HOURS:.0f}h fill window).")
     else:
-        new_state = {"direction": None, "last_raw_direction": plan.get("raw_direction")}
+        new_state = {"direction": None, "last_raw_direction": plan.get("raw_direction"),
+                     "last_raw_streak": plan.get("raw_streak", 0)}
 
     save_state(new_state)
 
