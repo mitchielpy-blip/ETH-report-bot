@@ -566,7 +566,11 @@ def suggest_trade_plan(price, score, atr_value, supports, resistances, htf_trend
         return {"direction": None, "reason": "Couldn't compute a sane risk:reward — sitting out this hour.", "raw_direction": raw_direction}
 
     rr = reward / risk
-    if rr < MIN_RR:
+    # Gate on the R:R as it's actually shown (rounded to 2dp), so a setup the
+    # report displays as e.g. "1.50" isn't rejected because its raw value was
+    # 1.497. Without this, a true R:R just under the threshold rounds up on
+    # screen and looks like a rejected 1.50, which is confusing.
+    if round(rr, 2) < MIN_RR:
         return {"direction": None, "reason": f"Risk:reward is {rr:.2f}, below the {MIN_RR} threshold — sitting out this hour.", "raw_direction": raw_direction}
 
     return {
