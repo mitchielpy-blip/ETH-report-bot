@@ -286,7 +286,9 @@ def evaluate_price_action_plan(candles_by_tf, previous_state=None, *,
         return _no_trade("Couldn't compute a sane risk:reward from the zone/structure — sitting out.",
                          raw_direction=direction, zone_id=zone_id)
     rr = reward / risk
-    if rr < min_rr:
+    # Gate on the displayed (2dp) R:R so a setup shown as "1.50" isn't rejected
+    # for a raw value of 1.497 — same rule as the indicator strategy.
+    if round(rr, 2) < min_rr:
         return _no_trade(f"Risk:reward is {rr:.2f}, below the {min_rr} threshold — sitting out.",
                          raw_direction=direction, zone_id=zone_id)
 
