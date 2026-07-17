@@ -1,9 +1,7 @@
 name: Fill Checker (ETH + SOL)
 
 on:
-  schedule:
-    - cron: "3,18,33,48 * * * *"   # every 15 min, offset from :00/:15/:30/:45
-  workflow_dispatch: {}
+  workflow_dispatch: {}   # triggered by the external cron scheduler (no in-workflow schedule)
 
 permissions:
   contents: write   # needed so the workflow can commit state files back
