@@ -1,9 +1,7 @@
 name: Hourly Report (ETH + SOL)
 
 on:
-  schedule:
-    - cron: "7 * * * *"   # every hour at :07
-  workflow_dispatch: {}     # also allows manual triggers from GitHub or an external service
+  workflow_dispatch: {}     # triggered by the external cron scheduler (no in-workflow schedule)
 
 permissions:
   contents: write   # needed so the workflow can commit state/log files back
