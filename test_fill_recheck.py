@@ -93,6 +93,42 @@ class FillReCheck(unittest.TestCase):
             fc.main()
         ep.assert_not_called()
 
+    def test_fill_checker_passes_require_rr_false(self):
+        # The whole point of the R:R fix: the fill re-check must call
+        # evaluate_plan with require_rr=False so a valid pending order isn't
+        # discarded just because a freshly-recomputed plan dips under MIN_RR.
+        still_long = {"direction": "long", "raw_direction": "long"}
+        _, _, ep = self._run(ticker_price=99.0, fresh_plan=still_long)
+        _, kwargs = ep.call_args
+        self.assertIs(kwargs.get("require_rr"), False)
+
+
+class RRGateAtFillTime(unittest.TestCase):
+    """suggest_trade_plan's R:R gate must apply at signal time but be skipped
+    at fill time (require_rr=False), so a pending order that was valid when
+    generated isn't thrown away because the latest ATR would recompute a
+    sub-MIN_RR hypothetical trade."""
+
+    # A long where the recomputed levels give R:R below MIN_RR:
+    #   entry = price - 0.7*ATR = 93, stop = entry - 1.5*ATR = 78 (risk 15),
+    #   target = nearest resistance = 105 (reward 12) -> rr = 0.8.
+    _KW = dict(price=100.0, score=None, atr_value=10.0, supports=[],
+               resistances=[105.0], htf_trend=None, adx_value=None,
+               previous_raw_direction="long")
+
+    def _plan(self, require_rr):
+        kw = dict(self._KW, score=bot.LONG_SCORE_MIN)
+        return bot.suggest_trade_plan(require_rr=require_rr, **kw)
+
+    def test_signal_time_rejects_sub_min_rr(self):
+        plan = self._plan(require_rr=True)   # default at signal generation
+        self.assertIsNone(plan["direction"])
+        self.assertIn("Risk:reward", plan["reason"])
+
+    def test_fill_time_keeps_direction_despite_sub_min_rr(self):
+        plan = self._plan(require_rr=False)  # the fill-time re-check
+        self.assertEqual(plan["direction"], "long")
+
 
 if __name__ == "__main__":
     unittest.main()

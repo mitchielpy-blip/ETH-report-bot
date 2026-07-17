@@ -1,2 +1,8 @@
 __pycache__/
 *.pyc
+
+# Local secrets — never commit. Supply these via GitHub Actions secrets instead
+# (DISCORD_WEBHOOK_URL, OKX_PROXY). See the setup section in README.md.
+.env
+*.env
+.env.*

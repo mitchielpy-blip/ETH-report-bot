@@ -518,7 +518,7 @@ def build_entry_levels(direction, price, atr_value, supports, resistances):
     return entry, stop, target
 
 
-def suggest_trade_plan(price, score, atr_value, supports, resistances, htf_trend=None, adx_value=None, previous_raw_direction=None):
+def suggest_trade_plan(price, score, atr_value, supports, resistances, htf_trend=None, adx_value=None, previous_raw_direction=None, require_rr=True):
     """
     Rule-based entry/SL/TP suggestion. Returns a dict, or None if no setup
     clears the minimum reward:risk bar (mirrors "RR不合格，不開倉" logic).
@@ -530,6 +530,15 @@ def suggest_trade_plan(price, score, atr_value, supports, resistances, htf_trend
     higher-timeframe checks pass, and the resulting reward:risk clears
     MIN_RR. Every return includes "raw_direction" so the caller can track
     it for next hour's persistence check, even when no trade results.
+
+    require_rr gates on the reward:reward at *signal-generation* time (the
+    default). The fill-time re-check passes require_rr=False: by then a
+    pending order already exists with its entry/stop/target — and thus its
+    R:R — locked in from when it was generated. Re-deriving fresh levels from
+    the latest ATR and re-gating on *their* R:R would throw away a valid fill
+    because a different, hypothetical trade wouldn't qualify. At fill time we
+    only care whether the directional thesis still holds, not whether a
+    freshly-minted plan would clear MIN_RR.
     """
     if score >= LONG_SCORE_MIN:
         raw_direction = "long"
@@ -569,8 +578,9 @@ def suggest_trade_plan(price, score, atr_value, supports, resistances, htf_trend
     # Gate on the R:R as it's actually shown (rounded to 2dp), so a setup the
     # report displays as e.g. "1.50" isn't rejected because its raw value was
     # 1.497. Without this, a true R:R just under the threshold rounds up on
-    # screen and looks like a rejected 1.50, which is confusing.
-    if round(rr, 2) < MIN_RR:
+    # screen and looks like a rejected 1.50, which is confusing. Skipped when
+    # require_rr is False (the fill-time re-check) — see the docstring.
+    if require_rr and round(rr, 2) < MIN_RR:
         return {"direction": None, "reason": f"Risk:reward is {rr:.2f}, below the {MIN_RR} threshold — sitting out this hour.", "raw_direction": raw_direction}
 
     return {
@@ -593,7 +603,7 @@ _PA_UNSET = object()
 
 
 def evaluate_plan(candles, previous_raw_direction=None, htf_trend=_HTF_UNSET,
-                  candles_by_tf=_PA_UNSET, previous_state=None):
+                  candles_by_tf=_PA_UNSET, previous_state=None, require_rr=True):
     """
     Derive the trade plan for a completed-candle series — the decision half of
     build_report, without any of the report formatting.
@@ -630,7 +640,7 @@ def evaluate_plan(candles, previous_raw_direction=None, htf_trend=_HTF_UNSET,
     if htf_trend is _HTF_UNSET:
         htf_trend = higher_timeframe_trend()
     return suggest_trade_plan(price, score, atr_value, supports, resistances,
-                              htf_trend, adx_value, previous_raw_direction)
+                              htf_trend, adx_value, previous_raw_direction, require_rr=require_rr)
 
 
 def build_report(candles, previous_raw_direction=None):
@@ -650,6 +660,7 @@ def build_report(candles, previous_raw_direction=None):
     # display line below.
     score = compute_bias_score(candles)
     vol_ratio = volume_ratio(candles)
+    atr_value = atr(candles)  # the ruler that sizes the entry/stop/target distances below
 
     nearest_support = max([s for s in supports if s < price], default=supports[0] if supports else None)
     nearest_resistance = min([res for res in resistances if res > price], default=resistances[0] if resistances else None)
@@ -671,6 +682,8 @@ def build_report(candles, previous_raw_direction=None):
     if vol_ratio is not None:
         vol_label = "confirming" if vol_ratio >= VOLUME_CONFIRM_RATIO else ("weak" if vol_ratio <= VOLUME_LOW_RATIO else "normal")
         lines.append(f"Volume: {vol_ratio:.2f}x average ({vol_label})")
+    if atr_value:
+        lines.append(f"ATR(14): ${atr_value:,.2f} ({atr_value / price * 100:.1f}% of price) — sizes entry/stop/target; stop sits {ATR_SL_MULT:g}x ATR away")
     lines.append(f"RSI(14): {r:.1f}" if r else "RSI: insufficient data")
     lines.append(f"MACD histogram: {hist:+.2f}")
     lines.append(f"Bias score: {score}/100 (a rough heuristic, not a win rate)")
@@ -713,10 +726,13 @@ def build_price_action_report(candles_by_tf, previous_state=None):
     trend = pa.swing_trend(c4h, PA_SWING_LEFT, PA_SWING_RIGHT)
     trend_label = {"bullish": "bullish (HH/HL) — longs only",
                    "bearish": "bearish (LH/LL) — shorts only"}.get(trend, "ranging — stand aside")
+    atr_1h = atr(c1h)  # 1H volatility — sizes the impulse threshold and the zone-stop buffer
 
     lines = []
     lines.append(f"**{ASSET} Price-Action Report · {datetime.now(SGT).strftime('%Y-%m-%d %H:%M')} SGT**")
     lines.append(f"Price: ${price:,.2f} (last completed {PA_TIMEFRAMES['5m']} close)")
+    if atr_1h:
+        lines.append(f"ATR({PA_TIMEFRAMES['1H']}): ${atr_1h:,.2f} ({atr_1h / price * 100:.1f}% of price) — sizes the zone & stop buffer")
     lines.append(f"1. Trend ({PA_TIMEFRAMES['4H']}): {trend_label}")
     if plan.get("zone"):
         zl, zh = plan["zone"]

@@ -87,7 +87,13 @@ def main():
         # the common "not filled yet" path a single cheap ticker call.
         fresh = bot._price_action_revalidate(bot.fetch_timeframes(), direction)
     else:
-        fresh = bot.evaluate_plan(bot.fetch_candles(), previous_raw_direction=direction)
+        # require_rr=False: the pending order's entry/stop/target — and thus its
+        # R:R — were locked in when the signal was generated and cleared MIN_RR
+        # then. Re-deriving fresh levels from the latest ATR and re-gating on
+        # *their* R:R would discard a perfectly valid fill just because a
+        # different, hypothetical trade wouldn't qualify. At fill time we only
+        # ask whether the directional thesis still holds.
+        fresh = bot.evaluate_plan(bot.fetch_candles(), previous_raw_direction=direction, require_rr=False)
     if not fresh or fresh.get("direction") != direction:
         if not fresh:
             reason = "insufficient data to re-evaluate"
