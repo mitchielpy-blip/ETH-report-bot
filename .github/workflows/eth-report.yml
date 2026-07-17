@@ -31,6 +31,16 @@ jobs:
           SIGNALS_LOG_FILE: signals_log_sol.csv
           DISCORD_WEBHOOK_URL: ${{ secrets.DISCORD_WEBHOOK_URL }}
           OKX_PROXY: ${{ secrets.OKX_PROXY }}
+      - name: BTC report
+        if: always()   # a transient ETH/SOL failure shouldn't silence the BTC report
+        run: python eth_report_bot.py
+        env:
+          INST_ID: BTC-USDT-SWAP
+          STATE_FILE: state_btc.json
+          SIGNALS_LOG_FILE: signals_log_btc.csv
+          DISCORD_WEBHOOK_URL: ${{ secrets.DISCORD_WEBHOOK_URL }}   # same channel as ETH/SOL
+          DISCORD_BOT_NAME: BTC Hourly Report
+          OKX_PROXY: ${{ secrets.OKX_PROXY }}
       - name: Save signal state and log
         if: always()
         run: |

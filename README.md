@@ -13,6 +13,28 @@ Keep this section up to date whenever a real bug fix or parameter change
 goes live — it's the reference point for whether `forward_test_report.py`'s
 numbers are even measuring the strategy you think they are.
 
+> **BTC added 2026-07-17.** `BTC-USDT-SWAP` now runs as a third instrument
+> alongside ETH and SOL (same indicator strategy, `ADX_MIN` 20, own
+> `state_btc.json` / `signals_log_btc.csv`, posts to the same Discord
+> channel under the name **"BTC Hourly Report"**). This **reverses the
+> 2026-07-14 rejection below**, and here's why: that call rested on a
+> *single* 12-month window that happened to land on a soft patch. Re-tested
+> across three independent windows at `ADX_MIN` 20, BTC is net-positive in
+> every one and never had a losing full window:
+> - Recent 12mo (2025-07→2026-07): 66 trades, +0.25R net — but halves
+>   −0.04R / +0.55R (all the edge in the back half).
+> - Prior 12mo (2024-07→2025-07): 52 trades, +0.23R net, halves
+>   +0.29R / +0.17R — **both positive, passes the split cleanly**.
+> - 18mo (2025-01→2026-07): 101 trades, +0.19R net, halves +0.03R / +0.34R.
+>
+> The weak first halves all fall in a ~H2-2025 regime; outside it BTC trades
+> like ETH/SOL. It's a touch less walk-forward-consistent than the other two,
+> so treat that flat patch as an *expected* stretch, not a failure — and size
+> it no larger than ETH/SOL. Price-action on BTC was re-checked and stays
+> **dead** (only ~9 fully-aligned setups in a year, 0 wins), so BTC runs the
+> indicator strategy only. Raising `ADX_MIN` (25/30) only hurt BTC, so the
+> default 20 is kept.
+>
 > **SOL added + short gate loosened 2026-07-14.** Two changes, both
 > validated on 12-month 1H backtests before going live:
 > 1. **SOL-USDT-SWAP now runs as a second instrument** alongside ETH (same
