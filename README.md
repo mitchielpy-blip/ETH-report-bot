@@ -36,6 +36,18 @@ numbers are even measuring the strategy you think they are.
 > indicator strategy only. Raising `ADX_MIN` (25/30) only hurt BTC, so the
 > default 20 is kept.
 >
+> **BTC session filter (added 2026-07-18, live, BTC-only).** BTC now runs with
+> `SKIP_SESSIONS=asia` — it sits out signals generated in the Asia session
+> (00–08 UTC). `diagnostics.py` showed BTC's Asia session was a persistent drag
+> across *two independent* 12-month windows (−0.10R and −0.08R avg, ~39% win,
+> N≈32 each), while Europe/US carried the edge — and the full walk-forward
+> backtest confirmed it: skipping Asia lifts BTC from **47.9% / +0.14R / 8.0% DD**
+> to **49.6% / +0.19R / 6.4% DD** (144→130 trades) and turns the weak first half
+> (−0.02R) positive (+0.05R). The same filter is **neutral-to-harmful on ETH and
+> SOL** (Asia isn't a drag for them — it just trims trades, and slightly *raises*
+> SOL's drawdown), so it stays BTC-only. A textbook case for per-instrument, not
+> global, tuning.
+>
 > **All-three snapshot, same trailing-12mo window — after the 2026-07-17
 > fill-gate fix:** the fill-time re-check no longer re-gates R:R against
 > freshly-recomputed levels (it only checks the direction hasn't flipped),
