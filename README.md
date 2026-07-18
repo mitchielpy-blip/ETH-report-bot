@@ -232,14 +232,27 @@ numbers are even measuring the strategy you think they are.
   make (a phantom edge). Only `backtest.py` reads it. Set it for a backtest via
   the `exit_model` input on the Run Backtest workflow.
 
-  _Measured so far (12-month walk-forward, matched to each instrument's live
-  config): `breakeven` at 1R **lowered** net expectancy on all three instruments
-  (ETH +0.23R→+0.20R, SOL +0.34R→+0.27R, BTC +0.19R→+0.12R) — it scratches the
-  retrace-then-run trades this strategy relies on (on BTC it turned 30% of trades
-  into breakeven scratches). So `breakeven` is not a candidate for live. `trailing`
-  is the current experiment, on the theory that letting winners run suits this
-  edge better than capping them. Nothing here is live; `fixed` remains the only
-  exit the bot actually delivers._
+  _Measured (12-month walk-forward, matched to each instrument's live config).
+  Net expectancy (R/trade) — the decision metric — for every exit variant:_
+
+  | Instrument | `fixed` | `breakeven` @1R | `trailing` ride-past | `trailing` +target-cap |
+  |------------|---------|-----------------|----------------------|------------------------|
+  | ETH | **+0.23R** (50.0%) | +0.20R | +0.17R (56.9%) | +0.16R (58.2%) |
+  | SOL | **+0.34R** (54.5%) | +0.27R | +0.27R (60.5%) | +0.26R (61.7%) |
+  | BTC | **+0.19R** (49.6%) | +0.12R | +0.17R (63.2%) | +0.11R (65.5%) |
+
+  _Conclusion: **no managed-exit variant beats `fixed` on net expectancy on any
+  instrument** — `fixed` set-and-forget wins net R across the board. `breakeven`
+  scratches the retrace-then-run trades the edge relies on (on BTC it turned 30%
+  of trades into breakeven scratches). Both `trailing` variants buy a large
+  win-rate jump (+8 to +16pp) and smoother drawdowns, but cost ~0.05–0.08R of
+  expectancy every time — a risk-profile reshaping, not an edge. The
+  `TRAIL_HONOR_TARGET=true` (target-cap) hypothesis specifically failed: capping
+  winners made BTC **worse** than plain ride-past trailing (+0.11R vs +0.17R),
+  because BTC's edge lives in a fat right tail of trades that run past the fixed
+  target — capping them amputates exactly the trades that pay for the strategy.
+  So `fixed` stays the default and the only exit the bot actually delivers.
+  `EXIT_MODEL` remains a backtest-research knob; nothing here is wired live._
 
 This is a rule template, backed by `backtest.py` and `backtest_sweep.py`
 so changes can be checked against history before going live — but no
