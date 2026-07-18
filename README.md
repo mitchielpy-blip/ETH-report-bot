@@ -36,6 +36,18 @@ numbers are even measuring the strategy you think they are.
 > indicator strategy only. Raising `ADX_MIN` (25/30) only hurt BTC, so the
 > default 20 is kept.
 >
+> **BTC session filter (added 2026-07-18, live, BTC-only).** BTC now runs with
+> `SKIP_SESSIONS=asia` — it sits out signals generated in the Asia session
+> (00–08 UTC). `diagnostics.py` showed BTC's Asia session was a persistent drag
+> across *two independent* 12-month windows (−0.10R and −0.08R avg, ~39% win,
+> N≈32 each), while Europe/US carried the edge — and the full walk-forward
+> backtest confirmed it: skipping Asia lifts BTC from **47.9% / +0.14R / 8.0% DD**
+> to **49.6% / +0.19R / 6.4% DD** (144→130 trades) and turns the weak first half
+> (−0.02R) positive (+0.05R). The same filter is **neutral-to-harmful on ETH and
+> SOL** (Asia isn't a drag for them — it just trims trades, and slightly *raises*
+> SOL's drawdown), so it stays BTC-only. A textbook case for per-instrument, not
+> global, tuning.
+>
 > **All-three snapshot, same trailing-12mo window — after the 2026-07-17
 > fill-gate fix:** the fill-time re-check no longer re-gates R:R against
 > freshly-recomputed levels (it only checks the direction hasn't flipped),
@@ -179,6 +191,17 @@ numbers are even measuring the strategy you think they are.
   direction, the plan is dropped (change with `HTF_BAR`, default `4H`).
 - **Trend-strength filter**: if ADX(14) is below `ADX_MIN` (default 20),
   the market is treated as flat/choppy and no plan is proposed.
+- **Session filter** (opt-in, off by default): `SKIP_SESSIONS` is a
+  comma-separated list of sessions to sit out, keyed by the signal bar's UTC
+  hour — `asia` (00–08 UTC / 08–16 SGT), `europe` (08–16 UTC), `us` (16–24
+  UTC), the same buckets `diagnostics.py` breaks results down by. Blank (the
+  default) trades every session, so the validated model is unchanged unless you
+  opt in. It's a signal-*generation* gate: a pending order created in an allowed
+  session still fills normally even if its entry is touched during a filtered
+  one. Set per-instrument when diagnostics show a session is a persistent,
+  *out-of-sample* drag — e.g. BTC's Asia session lost across two independent
+  12-month windows (−0.10R and −0.08R avg), so `SKIP_SESSIONS=asia` is a
+  candidate there. Confirm with a full backtest before relying on it.
 - **Entry**: a volatility-scaled pullback (`PULLBACK_ATR_MULT` × ATR from
   current price, default 0.7 — see forward-test log above for why),
   capped at the nearest support/resistance level if closer.
