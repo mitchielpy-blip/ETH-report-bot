@@ -179,6 +179,17 @@ numbers are even measuring the strategy you think they are.
   direction, the plan is dropped (change with `HTF_BAR`, default `4H`).
 - **Trend-strength filter**: if ADX(14) is below `ADX_MIN` (default 20),
   the market is treated as flat/choppy and no plan is proposed.
+- **Session filter** (opt-in, off by default): `SKIP_SESSIONS` is a
+  comma-separated list of sessions to sit out, keyed by the signal bar's UTC
+  hour — `asia` (00–08 UTC / 08–16 SGT), `europe` (08–16 UTC), `us` (16–24
+  UTC), the same buckets `diagnostics.py` breaks results down by. Blank (the
+  default) trades every session, so the validated model is unchanged unless you
+  opt in. It's a signal-*generation* gate: a pending order created in an allowed
+  session still fills normally even if its entry is touched during a filtered
+  one. Set per-instrument when diagnostics show a session is a persistent,
+  *out-of-sample* drag — e.g. BTC's Asia session lost across two independent
+  12-month windows (−0.10R and −0.08R avg), so `SKIP_SESSIONS=asia` is a
+  candidate there. Confirm with a full backtest before relying on it.
 - **Entry**: a volatility-scaled pullback (`PULLBACK_ATR_MULT` × ATR from
   current price, default 0.7 — see forward-test log above for why),
   capped at the nearest support/resistance level if closer.

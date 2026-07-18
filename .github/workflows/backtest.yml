@@ -31,6 +31,10 @@ on:
         description: "Minimum ADX to allow a trade (higher = stricter trend-strength filter)"
         required: false
         default: "20"
+      skip_sessions:
+        description: "Comma-separated sessions to sit out (asia,europe,us). Blank = trade all (default)."
+        required: false
+        default: ""
 
 jobs:
   backtest:
@@ -51,6 +55,7 @@ jobs:
         env:
           STRATEGY: ${{ github.event.inputs.strategy }}
           ADX_MIN: ${{ github.event.inputs.adx_min }}   # indicator strategy only
+          SKIP_SESSIONS: ${{ github.event.inputs.skip_sessions }}   # sit out these sessions (indicator strategy)
           OKX_PROXY: ${{ secrets.OKX_PROXY }}   # proxy OKX calls past the runner's geo-block
       - name: Upload results
         uses: actions/upload-artifact@v4

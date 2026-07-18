@@ -87,6 +87,15 @@ ENTRY_MODE = os.environ.get("ENTRY_MODE", "pullback")
 ADX_MIN = float(os.environ.get("ADX_MIN", 20))                        # skip trades when trend strength is below this
 VOLUME_CONFIRM_RATIO = float(os.environ.get("VOLUME_CONFIRM_RATIO", 1.2))  # above-average volume amplifies conviction
 VOLUME_LOW_RATIO = float(os.environ.get("VOLUME_LOW_RATIO", 0.7))          # below-average volume dampens conviction
+# Trading-session filter. Comma-separated session keys to SIT OUT, keyed by the
+# signal bar's UTC hour (asia = 00-08 UTC / 08-16 SGT, europe = 08-16 UTC,
+# us = 16-24 UTC — the same boundaries diagnostics.py buckets by). Empty
+# (the default) trades every session, so the validated model is byte-unchanged
+# unless you opt in. Set e.g. SKIP_SESSIONS=asia for an instrument whose
+# diagnostics show a session is a persistent, out-of-sample drag (BTC's Asia
+# session was, across two independent 12-month windows).
+SKIP_SESSIONS = os.environ.get("SKIP_SESSIONS", "")
+SKIP_SESSIONS_SET = frozenset(s.strip().lower() for s in SKIP_SESSIONS.split(",") if s.strip())
 
 # How long a pending (unfilled) pullback entry stays live before being
 # discarded. Keep this equal to the backtest's ENTRY_WAIT_CANDLES (in
@@ -518,7 +527,18 @@ def build_entry_levels(direction, price, atr_value, supports, resistances):
     return entry, stop, target
 
 
-def suggest_trade_plan(price, score, atr_value, supports, resistances, htf_trend=None, adx_value=None, previous_raw_direction=None, require_rr=True):
+def session_for_hour(utc_hour):
+    """Map a signal bar's UTC hour to a session key (asia/europe/us). The
+    boundaries match diagnostics.py's bucket_session, so the SKIP_SESSIONS
+    filter sits out exactly the buckets that analysis breaks results down by."""
+    if 0 <= utc_hour < 8:
+        return "asia"
+    if 8 <= utc_hour < 16:
+        return "europe"
+    return "us"
+
+
+def suggest_trade_plan(price, score, atr_value, supports, resistances, htf_trend=None, adx_value=None, previous_raw_direction=None, require_rr=True, session=None):
     """
     Rule-based entry/SL/TP suggestion. Returns a dict, or None if no setup
     clears the minimum reward:risk bar (mirrors "RR不合格，不開倉" logic).
@@ -552,6 +572,9 @@ def suggest_trade_plan(price, score, atr_value, supports, resistances, htf_trend
 
     if adx_value is not None and adx_value < ADX_MIN:
         return {"direction": None, "reason": f"ADX {adx_value:.1f} is below {ADX_MIN} — market looks flat/choppy, sitting out.", "raw_direction": raw_direction}
+
+    if session is not None and session in SKIP_SESSIONS_SET:
+        return {"direction": None, "reason": f"{session.capitalize()} session is filtered out for this instrument (SKIP_SESSIONS) — sitting out.", "raw_direction": raw_direction}
 
     if previous_raw_direction != raw_direction:
         return {"direction": None, "reason": f"{raw_direction.capitalize()} signal just appeared this hour — waiting one more hour to confirm it's not noise.", "raw_direction": raw_direction}
@@ -639,8 +662,18 @@ def evaluate_plan(candles, previous_raw_direction=None, htf_trend=_HTF_UNSET,
     score = compute_bias_score(candles)
     if htf_trend is _HTF_UNSET:
         htf_trend = higher_timeframe_trend()
+    # Session of the signal bar itself (its completed-candle UTC hour), so the
+    # optional SKIP_SESSIONS gate is evaluated identically live and in the
+    # backtest — both reach suggest_trade_plan through this one path. Like the
+    # R:R gate, this is a signal-GENERATION filter, so it's only applied when
+    # require_rr is True; at fill time (require_rr=False) we pass session=None so
+    # a pending order generated in an allowed session isn't discarded just
+    # because its entry happens to get touched during a filtered session.
+    session = (session_for_hour(datetime.fromtimestamp(candles[-1]["ts"] / 1000, tz=timezone.utc).hour)
+               if require_rr else None)
     return suggest_trade_plan(price, score, atr_value, supports, resistances,
-                              htf_trend, adx_value, previous_raw_direction, require_rr=require_rr)
+                              htf_trend, adx_value, previous_raw_direction, require_rr=require_rr,
+                              session=session)
 
 
 def build_report(candles, previous_raw_direction=None):
