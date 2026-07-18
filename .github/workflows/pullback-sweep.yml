@@ -31,6 +31,10 @@ on:
         description: "Minimum ADX to allow a trade (should match your live bot's ADX_MIN unless you're deliberately testing a different value)"
         required: false
         default: "20"
+      skip_sessions:
+        description: "Comma-separated sessions to sit out (asia,europe,us). Match live: blank for ETH/SOL, 'asia' for BTC."
+        required: false
+        default: ""
 
 jobs:
   sweep:
@@ -50,6 +54,7 @@ jobs:
           python -u backtest_sweep.py $ARGS
         env:
           ADX_MIN: ${{ github.event.inputs.adx_min }}
+          SKIP_SESSIONS: ${{ github.event.inputs.skip_sessions }}   # sit out these sessions (match live: 'asia' for BTC)
           OKX_PROXY: ${{ secrets.OKX_PROXY }}   # proxy OKX calls past the runner's geo-block
       - name: Upload results
         uses: actions/upload-artifact@v4
