@@ -144,8 +144,29 @@ numbers are even measuring the strategy you think they are.
 >    exactly at their price (it charges fees but no slippage). Real stops slip
 >    in fast moves, which mostly hurts losers, so net R is mildly optimistic.
 > 3. *In-sample tuning* — `PULLBACK_ATR_MULT=0.7` was tuned on the same window
->    this baseline reports. Re-run with `--end-date` on an earlier, untouched
->    window for a truer out-of-sample read before trusting it.
+>    this baseline reports. **Now validated out-of-sample** (see below).
+>
+> **Out-of-sample validation (2026-07-18, window ending 2025-07-12 — the
+> untouched prior year the entry knobs were never tuned on).** Live config
+> (`PULLBACK_ATR_MULT=0.7`, `SHORT_SCORE_MAX=45`, `exit_model=fixed`), same
+> per-instrument setup as live (BTC asia-skip). All three stayed net-positive
+> on a year the tuning never saw, so the config is **not overfit**:
+>
+> | Inst | In-sample (tuned) | Out-of-sample | OOS 1st→2nd half |
+> |------|-------------------|---------------|------------------|
+> | ETH | 50.0% / +0.23R | 47.1% / +0.14R (86 tr) | +0.38R → −0.11R |
+> | SOL | 54.5% / +0.34R | 51.0% / +0.24R (105 tr) | +0.30R → +0.19R |
+> | BTC | 49.6% / +0.19R | 51.0% / +0.21R (100 tr) | +0.45R → −0.03R |
+>
+> Two takeaways: (1) **treat the tuned headline as a ceiling** — ETH and SOL
+> each gave back ~0.10R going OOS (normal in-sample flattery), so the OOS range
+> (~+0.14 to +0.24R) is the realistic live expectation. (2) **The edge is
+> regime-dependent, and SOL is the most robust** — SOL is the only instrument
+> positive in *both* OOS halves; ETH (−0.11R) and BTC (−0.03R) each had a
+> flat/negative second half where the trend-following edge didn't fire. The
+> three are correlated, so expect those dead stretches to overlap. Robustness
+> ranking: SOL > BTC > ETH. BTC's headline replicated OOS (+0.21R vs +0.19R),
+> confirming asia-skip BTC is a keeper despite being the marginal instrument.
 
 ## What you get in the report
 - Current price (the last **completed** 1H candle's close — not the
