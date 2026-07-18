@@ -46,6 +46,14 @@ jobs:
           # first half positive. ETH/SOL are left on all sessions (the filter is neutral-
           # to-harmful for them), so this stays a per-instrument setting.
           SKIP_SESSIONS: asia
+          # Tighter stop for BTC only (1.0x ATR vs the 1.5x default). Validated
+          # in-sample AND out-of-sample (window ending 2025-07-12): 1.0 lifts BTC
+          # net expectancy ~+0.20R->+0.29R/trade and is the only BTC stop width with
+          # both OOS half-splits positive. ETH/SOL are genuinely best at 1.5 (ETH's
+          # 1.0 edge did not replicate OOS; SOL peaks at 1.5), so this is per-instrument.
+          # Parity-safe: ATR_SL_MULT sizes the stop at signal time (part of the plan the
+          # alert posts), so live and backtest still derive the same behaviour.
+          ATR_SL_MULT: "1.0"
       - name: Save signal state and log
         if: always()
         run: |

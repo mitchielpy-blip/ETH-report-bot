@@ -37,6 +37,10 @@ jobs:
           DISCORD_WEBHOOK_URL: ${{ secrets.DISCORD_WEBHOOK_URL }}
           DISCORD_BOT_NAME: BTC Hourly Report
           OKX_PROXY: ${{ secrets.OKX_PROXY }}
+          # Keep BTC's tighter 1.0x-ATR stop consistent with the report step, so any
+          # plan the fill-time re-validation rebuilds uses the same stop basis. See
+          # eth-report.yml's BTC step for the in-/out-of-sample validation.
+          ATR_SL_MULT: "1.0"
       - name: ETH price-action fill check
         if: always()   # watch the price-action strategy's pending entries too
         run: python fill_checker.py
