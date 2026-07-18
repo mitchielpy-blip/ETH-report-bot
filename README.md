@@ -167,6 +167,30 @@ numbers are even measuring the strategy you think they are.
 > three are correlated, so expect those dead stretches to overlap. Robustness
 > ranking: SOL > BTC > ETH. BTC's headline replicated OOS (+0.21R vs +0.19R),
 > confirming asia-skip BTC is a keeper despite being the marginal instrument.
+>
+> **Stop-distance sweep (`ATR_SL_MULT`), 2026-07-18 — in-sample + OOS.** Swept
+> the stop width (1.0 / 1.5 / 2.0 / 2.5 / 3.0 ATR) per instrument, both the
+> trailing 12-mo window and the untouched year ending 2025-07-12. Net R per
+> trade (a tighter stop raises R:R, so ~60% more setups clear the `MIN_RR`
+> gate — the trade count roughly doubles at 1.0):
+>
+> | Inst | 1.0 IS→OOS | 1.5 (live) IS→OOS | Verdict |
+> |------|------------|-------------------|---------|
+> | ETH | +0.275 → +0.116 | +0.234 → +0.138 | **stay 1.5** — 1.0's IS edge did not replicate (OOS wash) |
+> | SOL | +0.248 → +0.147 | +0.336 → +0.245 | **stay 1.5** — 1.5 wins both windows (negative control) |
+> | BTC | +0.324 → +0.252 | +0.186 → +0.211 | **→ 1.0** — beats 1.5 on both windows, only config with both OOS halves + (+0.246/+0.258) |
+>
+> Conclusion: **`ATR_SL_MULT=1.0` is a confirmed, replicated improvement for
+> BTC only** (~+0.20R → +0.29R/trade averaged across windows, on the weakest
+> instrument, with better half-consistency and similar drawdown). ETH's 1.0
+> result was in-sample luck (evaporated OOS); SOL is genuinely best at 1.5. So
+> the stop is per-instrument like the session filter: **BTC → 1.0, ETH/SOL →
+> 1.5.** Wire live by setting `ATR_SL_MULT=1.0` on the BTC steps of
+> `eth-report.yml` and `fill-checker.yml` (same per-step env pattern as BTC's
+> `SKIP_SESSIONS=asia`). Unlike `EXIT_MODEL`, this is parity-safe to set live:
+> `ATR_SL_MULT` sizes the stop *at signal time* (part of the plan the alert
+> already posts), not an active position-management action, so live and
+> backtest still derive the same behaviour.
 
 ## What you get in the report
 - Current price (the last **completed** 1H candle's close — not the
