@@ -210,6 +210,24 @@ numbers are even measuring the strategy you think they are.
 - **Take-profit**: the next support/resistance level in that direction.
 - **Gate**: if the resulting reward:risk is below `MIN_RR` (default 1.5),
   no plan is published — you just get the reason why.
+- **Exit management** (`EXIT_MODEL`, default `fixed` — **backtest-research only,
+  not yet live**): `fixed` is set-and-forget — a filled trade runs to its
+  original stop, its target, or the hold timeout, which is exactly what the live
+  bot delivers today (the report posts entry/stop/target, `fill_checker.py`
+  confirms the fill, and nothing manages the position after that). `breakeven`
+  slides the stop up to entry once the trade has gone `BREAKEVEN_AT_R` (default
+  1.0) in favour — turning a pullback into a scratch instead of a loss (a new
+  `breakeven` outcome in the backtest summary, counted as ~0R and excluded from
+  the win-rate denominator like a timeout). The move is applied *after* each
+  bar's exit check, so the bar that first reaches +1R can still be stopped at the
+  original level — no intrabar lookahead. Exit logic lives in one pure stepper
+  (`exit_manager.ManagedExit`) so the backtest and a future live position-manager
+  can decide exits identically. **`EXIT_MODEL` must stay `fixed` on every live
+  workflow** until that live position-manager exists — otherwise the backtest
+  would model a stop move the live alerts never tell you to make (a phantom
+  edge). Only `backtest.py` reads it, to measure whether breakeven is worth
+  wiring live. Set it for a backtest via the `exit_model` input on the
+  Run Backtest workflow.
 
 This is a rule template, backed by `backtest.py` and `backtest_sweep.py`
 so changes can be checked against history before going live — but no
