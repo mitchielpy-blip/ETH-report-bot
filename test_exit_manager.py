@@ -106,6 +106,59 @@ class BreakevenModel(unittest.TestCase):
         self.assertEqual(me.on_bar(high=100.0, low=96.0, close=99.5), ("breakeven", 100.0))
 
 
+class TrailingModel(unittest.TestCase):
+    """model='trailing' — once the trade clears trail_at_r, the stop trails
+    trail_distance_r behind the best price, never loosens, and (by default) lets
+    the winner run past the fixed target."""
+
+    def _long(self, honor_target=None):
+        # entry 100, stop 90, target 130 -> risk 10; trail_at_r=1, distance=1.
+        return ManagedExit("long", 100.0, 90.0, 130.0, model="trailing",
+                           trail_at_r=1.0, trail_distance_r=1.0, honor_target=honor_target)
+
+    def test_no_trail_before_activation(self):
+        me = self._long()
+        # peaks at +0.8R (108) — below the +1R trigger, so the stop stays put.
+        self.assertEqual(me.on_bar(high=108.0, low=101.0, close=105.0), (None, None))
+        self.assertEqual(me.current_stop, 90.0)
+        # a later dip to the original stop is a genuine loss.
+        self.assertEqual(me.on_bar(high=104.0, low=90.0, close=92.0), ("loss", 90.0))
+
+    def test_activation_moves_stop_and_locks_profit(self):
+        me = self._long()
+        # +1.2R (112): trail activates, stop -> 112 - 1R = 102.
+        self.assertEqual(me.on_bar(high=112.0, low=101.0, close=110.0), (None, None))
+        self.assertEqual(me.current_stop, 102.0)
+        # retrace tags 102 -> a locked-in win, not a scratch.
+        self.assertEqual(me.on_bar(high=103.0, low=102.0, close=102.5), ("win", 102.0))
+
+    def test_trails_up_and_never_loosens(self):
+        me = self._long()
+        me.on_bar(high=112.0, low=101.0, close=110.0)   # stop -> 102
+        me.on_bar(high=120.0, low=110.0, close=118.0)   # extreme 120 -> stop 110
+        self.assertEqual(me.current_stop, 110.0)
+        me.on_bar(high=115.0, low=111.0, close=113.0)   # lower high must not lower the stop
+        self.assertEqual(me.current_stop, 110.0)
+
+    def test_rides_past_target_by_default(self):
+        me = self._long()
+        # spikes through the 130 target; default trailing ignores it and keeps trailing.
+        self.assertEqual(me.on_bar(high=135.0, low=101.0, close=134.0), (None, None))
+        self.assertEqual(me.current_stop, 125.0)  # 135 - 1R
+
+    def test_honor_target_true_caps_at_target(self):
+        me = self._long(honor_target=True)
+        self.assertEqual(me.on_bar(high=135.0, low=101.0, close=134.0), ("win", 130.0))
+
+    def test_short_trailing(self):
+        # entry 100, stop 110, target 70 -> risk 10; +1.2R favourable = 88.
+        me = ManagedExit("short", 100.0, 110.0, 70.0, model="trailing",
+                         trail_at_r=1.0, trail_distance_r=1.0)
+        self.assertEqual(me.on_bar(high=99.0, low=88.0, close=92.0), (None, None))
+        self.assertEqual(me.current_stop, 98.0)  # 88 + 1R
+        self.assertEqual(me.on_bar(high=98.0, low=95.0, close=97.0), ("win", 98.0))
+
+
 class SimulateTradeWiring(unittest.TestCase):
     """simulate_trade must reproduce fixed outcomes exactly, and flip a
     went-+1R-then-reversed trade from loss to breakeven under EXIT_MODEL=breakeven."""

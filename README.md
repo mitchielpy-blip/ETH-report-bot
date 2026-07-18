@@ -218,16 +218,28 @@ numbers are even measuring the strategy you think they are.
   slides the stop up to entry once the trade has gone `BREAKEVEN_AT_R` (default
   1.0) in favour — turning a pullback into a scratch instead of a loss (a new
   `breakeven` outcome in the backtest summary, counted as ~0R and excluded from
-  the win-rate denominator like a timeout). The move is applied *after* each
-  bar's exit check, so the bar that first reaches +1R can still be stopped at the
-  original level — no intrabar lookahead. Exit logic lives in one pure stepper
-  (`exit_manager.ManagedExit`) so the backtest and a future live position-manager
-  can decide exits identically. **`EXIT_MODEL` must stay `fixed` on every live
-  workflow** until that live position-manager exists — otherwise the backtest
-  would model a stop move the live alerts never tell you to make (a phantom
-  edge). Only `backtest.py` reads it, to measure whether breakeven is worth
-  wiring live. Set it for a backtest via the `exit_model` input on the
-  Run Backtest workflow.
+  the win-rate denominator like a timeout). `trailing` trails the stop
+  `TRAIL_DISTANCE_R` (default 1.0) behind the best price once the trade clears
+  `TRAIL_AT_R` (default 1.0), and by default lets the winner run *past* the fixed
+  target (`TRAIL_HONOR_TARGET=false`; set true to keep the target as a hard cap
+  and use the trail only for downside protection). Any stop move is applied
+  *after* each bar's exit check, so the bar that first reaches the trigger can
+  still be stopped at the original level — no intrabar lookahead. Exit logic lives
+  in one pure stepper (`exit_manager.ManagedExit`) so the backtest and a future
+  live position-manager can decide exits identically. **`EXIT_MODEL` must stay
+  `fixed` on every live workflow** until that live position-manager exists —
+  otherwise the backtest would model a stop move the live alerts never tell you to
+  make (a phantom edge). Only `backtest.py` reads it. Set it for a backtest via
+  the `exit_model` input on the Run Backtest workflow.
+
+  _Measured so far (12-month walk-forward, matched to each instrument's live
+  config): `breakeven` at 1R **lowered** net expectancy on all three instruments
+  (ETH +0.23R→+0.20R, SOL +0.34R→+0.27R, BTC +0.19R→+0.12R) — it scratches the
+  retrace-then-run trades this strategy relies on (on BTC it turned 30% of trades
+  into breakeven scratches). So `breakeven` is not a candidate for live. `trailing`
+  is the current experiment, on the theory that letting winners run suits this
+  edge better than capping them. Nothing here is live; `fixed` remains the only
+  exit the bot actually delivers._
 
 This is a rule template, backed by `backtest.py` and `backtest_sweep.py`
 so changes can be checked against history before going live — but no

@@ -340,7 +340,9 @@ def simulate_trade(candles, signal_index, plan, funding_events=None,
     # slides the stop to entry once the trade has gone BREAKEVEN_AT_R in favour.
     exit_mgr = ManagedExit(direction, entry, stop, target,
                            model=bot.EXIT_MODEL, be_at_r=bot.BREAKEVEN_AT_R,
-                           be_buffer_r=bot.BREAKEVEN_BUFFER_R)
+                           be_buffer_r=bot.BREAKEVEN_BUFFER_R,
+                           trail_at_r=bot.TRAIL_AT_R, trail_distance_r=bot.TRAIL_DISTANCE_R,
+                           honor_target=(bot.TRAIL_HONOR_TARGET if bot.EXIT_MODEL == "trailing" else None))
     for j in range(fill_index, min(fill_index + max_hold, len(candles))):
         c = candles[j]
         outcome, exit_price = exit_mgr.on_bar(c["high"], c["low"], c["close"])
