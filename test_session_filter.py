@@ -52,10 +52,17 @@ class SessionGate(unittest.TestCase):
         self.assertIn("session", plan["reason"].lower())
         self.assertEqual(plan["raw_direction"], "long")  # persistence still tracked
 
+    def test_filtered_session_suppresses_post(self):
+        # A deterministic session skip should not ping the channel.
+        with mock.patch.object(bot, "SKIP_SESSIONS_SET", frozenset({"asia"})):
+            plan = self._plan("asia")
+        self.assertTrue(plan.get("suppress_post"))
+
     def test_allowed_session_trades(self):
         with mock.patch.object(bot, "SKIP_SESSIONS_SET", frozenset({"asia"})):
             plan = self._plan("europe")
         self.assertEqual(plan["direction"], "long")
+        self.assertFalse(plan.get("suppress_post"))  # a real trade always posts
 
     def test_session_none_is_never_filtered(self):
         # session=None (fill-time re-check) must bypass the gate entirely.
@@ -92,6 +99,28 @@ class EvaluatePlanWiring(unittest.TestCase):
 
     def test_fill_time_passes_session_none(self):
         self.assertIsNone(self._run(hour=3, require_rr=False))
+
+
+class SkippedSessionSilentButOthersPost(unittest.TestCase):
+    """should_post (indicator) must stay silent on a SKIP_SESSIONS skip even
+    when it follows a posted long, yet still announce a genuine stand-down."""
+
+    def setUp(self):
+        self._strat = mock.patch.object(bot, "STRATEGY", "indicator")
+        self._strat.start()
+        self.addCleanup(self._strat.stop)
+
+    def test_session_skip_does_not_post_after_a_long(self):
+        # We posted a long last hour; this hour Asia is filtered out. Silent.
+        plan = {"direction": None, "reason": "Asia session is filtered out ...",
+                "raw_direction": "long", "suppress_post": True}
+        self.assertFalse(bot.should_post(plan, {"last_posted_direction": "long"}))
+
+    def test_ordinary_stand_down_still_posts(self):
+        # A neutral no-entry (no suppress_post) after a posted long is real news.
+        plan = {"direction": None, "reason": "score is in the neutral zone",
+                "raw_direction": None}
+        self.assertTrue(bot.should_post(plan, {"last_posted_direction": "long"}))
 
 
 if __name__ == "__main__":

@@ -599,7 +599,15 @@ def suggest_trade_plan(price, score, atr_value, supports, resistances, htf_trend
         return {"direction": None, "reason": f"ADX {adx_value:.1f} is below {ADX_MIN} — market looks flat/choppy, sitting out.", "raw_direction": raw_direction}
 
     if session is not None and session in SKIP_SESSIONS_SET:
-        return {"direction": None, "reason": f"{session.capitalize()} session is filtered out for this instrument (SKIP_SESSIONS) — sitting out.", "raw_direction": raw_direction}
+        # A filtered session is a deterministic, known-in-advance skip, so it's
+        # not "news" worth pinging the channel about — suppress_post keeps the
+        # hourly report silent (should_post honours it). The signal is still
+        # logged, and any live pending order from an allowed session is still
+        # kept alive / watched by fill_checker (which passes session=None).
+        return {"direction": None,
+                "reason": f"{session.capitalize()} session is filtered out for this instrument (SKIP_SESSIONS) — sitting out.",
+                "raw_direction": raw_direction,
+                "suppress_post": True}
 
     if previous_raw_direction != raw_direction:
         return {"direction": None, "reason": f"{raw_direction.capitalize()} signal just appeared this hour — waiting one more hour to confirm it's not noise.", "raw_direction": raw_direction}
@@ -887,9 +895,11 @@ def should_post(plan, previous_state):
     trades that should each post — so same-direction posts are NOT suppressed
     there.
     """
-    # A "no news" no-trade (e.g. the price-action strategy re-seeing a zone it
-    # already signalled) never posts, so a pending setup doesn't re-announce
-    # itself every run.
+    # A "no news" no-trade never posts, so it doesn't spam the channel: the
+    # price-action strategy re-seeing a zone it already signalled, or the
+    # indicator strategy sitting out a filtered SKIP_SESSIONS session (a
+    # deterministic, known-in-advance skip). The signal is still logged either
+    # way; we just don't ping.
     if plan.get("suppress_post"):
         return False
 
