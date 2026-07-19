@@ -144,8 +144,53 @@ numbers are even measuring the strategy you think they are.
 >    exactly at their price (it charges fees but no slippage). Real stops slip
 >    in fast moves, which mostly hurts losers, so net R is mildly optimistic.
 > 3. *In-sample tuning* — `PULLBACK_ATR_MULT=0.7` was tuned on the same window
->    this baseline reports. Re-run with `--end-date` on an earlier, untouched
->    window for a truer out-of-sample read before trusting it.
+>    this baseline reports. **Now validated out-of-sample** (see below).
+>
+> **Out-of-sample validation (2026-07-18, window ending 2025-07-12 — the
+> untouched prior year the entry knobs were never tuned on).** Live config
+> (`PULLBACK_ATR_MULT=0.7`, `SHORT_SCORE_MAX=45`, `exit_model=fixed`), same
+> per-instrument setup as live (BTC asia-skip). All three stayed net-positive
+> on a year the tuning never saw, so the config is **not overfit**:
+>
+> | Inst | In-sample (tuned) | Out-of-sample | OOS 1st→2nd half |
+> |------|-------------------|---------------|------------------|
+> | ETH | 50.0% / +0.23R | 47.1% / +0.14R (86 tr) | +0.38R → −0.11R |
+> | SOL | 54.5% / +0.34R | 51.0% / +0.24R (105 tr) | +0.30R → +0.19R |
+> | BTC | 49.6% / +0.19R | 51.0% / +0.21R (100 tr) | +0.45R → −0.03R |
+>
+> Two takeaways: (1) **treat the tuned headline as a ceiling** — ETH and SOL
+> each gave back ~0.10R going OOS (normal in-sample flattery), so the OOS range
+> (~+0.14 to +0.24R) is the realistic live expectation. (2) **The edge is
+> regime-dependent, and SOL is the most robust** — SOL is the only instrument
+> positive in *both* OOS halves; ETH (−0.11R) and BTC (−0.03R) each had a
+> flat/negative second half where the trend-following edge didn't fire. The
+> three are correlated, so expect those dead stretches to overlap. Robustness
+> ranking: SOL > BTC > ETH. BTC's headline replicated OOS (+0.21R vs +0.19R),
+> confirming asia-skip BTC is a keeper despite being the marginal instrument.
+>
+> **Stop-distance sweep (`ATR_SL_MULT`), 2026-07-18 — in-sample + OOS.** Swept
+> the stop width (1.0 / 1.5 / 2.0 / 2.5 / 3.0 ATR) per instrument, both the
+> trailing 12-mo window and the untouched year ending 2025-07-12. Net R per
+> trade (a tighter stop raises R:R, so ~60% more setups clear the `MIN_RR`
+> gate — the trade count roughly doubles at 1.0):
+>
+> | Inst | 1.0 IS→OOS | 1.5 (live) IS→OOS | Verdict |
+> |------|------------|-------------------|---------|
+> | ETH | +0.275 → +0.116 | +0.234 → +0.138 | **stay 1.5** — 1.0's IS edge did not replicate (OOS wash) |
+> | SOL | +0.248 → +0.147 | +0.336 → +0.245 | **stay 1.5** — 1.5 wins both windows (negative control) |
+> | BTC | +0.324 → +0.252 | +0.186 → +0.211 | **→ 1.0** — beats 1.5 on both windows, only config with both OOS halves + (+0.246/+0.258) |
+>
+> Conclusion: **`ATR_SL_MULT=1.0` is a confirmed, replicated improvement for
+> BTC only** (~+0.20R → +0.29R/trade averaged across windows, on the weakest
+> instrument, with better half-consistency and similar drawdown). ETH's 1.0
+> result was in-sample luck (evaporated OOS); SOL is genuinely best at 1.5. So
+> the stop is per-instrument like the session filter: **BTC → 1.0, ETH/SOL →
+> 1.5.** Wire live by setting `ATR_SL_MULT=1.0` on the BTC steps of
+> `eth-report.yml` and `fill-checker.yml` (same per-step env pattern as BTC's
+> `SKIP_SESSIONS=asia`). Unlike `EXIT_MODEL`, this is parity-safe to set live:
+> `ATR_SL_MULT` sizes the stop *at signal time* (part of the plan the alert
+> already posts), not an active position-management action, so live and
+> backtest still derive the same behaviour.
 
 ## What you get in the report
 - Current price (the last **completed** 1H candle's close — not the
@@ -210,6 +255,49 @@ numbers are even measuring the strategy you think they are.
 - **Take-profit**: the next support/resistance level in that direction.
 - **Gate**: if the resulting reward:risk is below `MIN_RR` (default 1.5),
   no plan is published — you just get the reason why.
+- **Exit management** (`EXIT_MODEL`, default `fixed` — **backtest-research only,
+  not yet live**): `fixed` is set-and-forget — a filled trade runs to its
+  original stop, its target, or the hold timeout, which is exactly what the live
+  bot delivers today (the report posts entry/stop/target, `fill_checker.py`
+  confirms the fill, and nothing manages the position after that). `breakeven`
+  slides the stop up to entry once the trade has gone `BREAKEVEN_AT_R` (default
+  1.0) in favour — turning a pullback into a scratch instead of a loss (a new
+  `breakeven` outcome in the backtest summary, counted as ~0R and excluded from
+  the win-rate denominator like a timeout). `trailing` trails the stop
+  `TRAIL_DISTANCE_R` (default 1.0) behind the best price once the trade clears
+  `TRAIL_AT_R` (default 1.0), and by default lets the winner run *past* the fixed
+  target (`TRAIL_HONOR_TARGET=false`; set true to keep the target as a hard cap
+  and use the trail only for downside protection). Any stop move is applied
+  *after* each bar's exit check, so the bar that first reaches the trigger can
+  still be stopped at the original level — no intrabar lookahead. Exit logic lives
+  in one pure stepper (`exit_manager.ManagedExit`) so the backtest and a future
+  live position-manager can decide exits identically. **`EXIT_MODEL` must stay
+  `fixed` on every live workflow** until that live position-manager exists —
+  otherwise the backtest would model a stop move the live alerts never tell you to
+  make (a phantom edge). Only `backtest.py` reads it. Set it for a backtest via
+  the `exit_model` input on the Run Backtest workflow.
+
+  _Measured (12-month walk-forward, matched to each instrument's live config).
+  Net expectancy (R/trade) — the decision metric — for every exit variant:_
+
+  | Instrument | `fixed` | `breakeven` @1R | `trailing` ride-past | `trailing` +target-cap |
+  |------------|---------|-----------------|----------------------|------------------------|
+  | ETH | **+0.23R** (50.0%) | +0.20R | +0.17R (56.9%) | +0.16R (58.2%) |
+  | SOL | **+0.34R** (54.5%) | +0.27R | +0.27R (60.5%) | +0.26R (61.7%) |
+  | BTC | **+0.19R** (49.6%) | +0.12R | +0.17R (63.2%) | +0.11R (65.5%) |
+
+  _Conclusion: **no managed-exit variant beats `fixed` on net expectancy on any
+  instrument** — `fixed` set-and-forget wins net R across the board. `breakeven`
+  scratches the retrace-then-run trades the edge relies on (on BTC it turned 30%
+  of trades into breakeven scratches). Both `trailing` variants buy a large
+  win-rate jump (+8 to +16pp) and smoother drawdowns, but cost ~0.05–0.08R of
+  expectancy every time — a risk-profile reshaping, not an edge. The
+  `TRAIL_HONOR_TARGET=true` (target-cap) hypothesis specifically failed: capping
+  winners made BTC **worse** than plain ride-past trailing (+0.11R vs +0.17R),
+  because BTC's edge lives in a fat right tail of trades that run past the fixed
+  target — capping them amputates exactly the trades that pay for the strategy.
+  So `fixed` stays the default and the only exit the bot actually delivers.
+  `EXIT_MODEL` remains a backtest-research knob; nothing here is wired live._
 
 This is a rule template, backed by `backtest.py` and `backtest_sweep.py`
 so changes can be checked against history before going live — but no

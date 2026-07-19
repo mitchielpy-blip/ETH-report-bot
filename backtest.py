@@ -42,6 +42,7 @@ from datetime import datetime, timezone
 import requests
 
 import eth_report_bot as bot
+from exit_manager import ManagedExit
 
 OKX_BASE = bot.OKX_BASE   # honours the OKX_BASE env override from eth_report_bot
 OKX_PROXIES = bot.OKX_PROXIES  # route OKX calls through OKX_PROXY when set (geo-block workaround)
@@ -332,22 +333,25 @@ def simulate_trade(candles, signal_index, plan, funding_events=None,
         net_r = gross_r - fee_r + funding_r
         return outcome, net_r, exit_ts, {"gross_r": gross_r, "fee_r": fee_r, "funding_r": funding_r}, fill_index
 
+    # Exit management lives in one shared, pure stepper (exit_manager.ManagedExit)
+    # so the backtest and a future live position-manager decide exits identically.
+    # With EXIT_MODEL=fixed (the live default) the stop never moves and outcomes
+    # are byte-identical to the old inline fixed SL/TP loop; EXIT_MODEL=breakeven
+    # slides the stop to entry once the trade has gone BREAKEVEN_AT_R in favour.
+    exit_mgr = ManagedExit(direction, entry, stop, target,
+                           model=bot.EXIT_MODEL, be_at_r=bot.BREAKEVEN_AT_R,
+                           be_buffer_r=bot.BREAKEVEN_BUFFER_R,
+                           trail_at_r=bot.TRAIL_AT_R, trail_distance_r=bot.TRAIL_DISTANCE_R,
+                           honor_target=(bot.TRAIL_HONOR_TARGET if bot.EXIT_MODEL == "trailing" else None))
     for j in range(fill_index, min(fill_index + max_hold, len(candles))):
         c = candles[j]
-        if direction == "long":
-            hit_stop = c["low"] <= stop
-            hit_target = c["high"] >= target
-        else:
-            hit_stop = c["high"] >= stop
-            hit_target = c["low"] <= target
-
-        # If both could have been touched in the same candle, assume the
-        # worse outcome (stop) hits first — conservative assumption.
-        if hit_stop:
-            return finalize("loss", -1.0, candles[j]["ts"])
-        if hit_target:
-            r_multiple = (target - entry) / risk if direction == "long" else (entry - target) / risk
-            return finalize("win", r_multiple, candles[j]["ts"])
+        outcome, exit_price = exit_mgr.on_bar(c["high"], c["low"], c["close"])
+        if outcome is not None:
+            # gross R from the actual exit price: a stop at the original level is
+            # exactly -1R, a breakeven stop at entry is ~0R, the target is +RR.
+            gross_r = ((exit_price - entry) / risk if direction == "long"
+                       else (entry - exit_price) / risk)
+            return finalize(outcome, gross_r, candles[j]["ts"])
 
     # Timed out — mark to market
     last_index = min(fill_index + max_hold, len(candles) - 1)
@@ -554,6 +558,11 @@ def summarize(trades, no_fill_count=0, invalidated_count=0):
     wins = [t for t in trades if t["outcome"] == "win"]
     losses = [t for t in trades if t["outcome"] == "loss"]
     timeouts = [t for t in trades if t["outcome"] == "timeout"]
+    # "breakeven" only appears under EXIT_MODEL=breakeven: a trade whose stop was
+    # moved to entry and then tagged. Like timeouts it's neither a clean win nor
+    # loss, so it's excluded from the win-rate denominator (win_rate_and_avg_r
+    # already counts only wins/losses) but its ~0R still lands in expectancy.
+    breakevens = [t for t in trades if t["outcome"] == "breakeven"]
 
     win_rate, avg_r = win_rate_and_avg_r(trades)
     avg_gross_r = sum(t["gross_r"] for t in trades) / len(trades)
@@ -564,7 +573,7 @@ def summarize(trades, no_fill_count=0, invalidated_count=0):
     equity, max_dd = equity_and_drawdown(trades)
 
     print(f"Total signals traded: {len(trades)}")
-    print(f"  Wins: {len(wins)}   Losses: {len(losses)}   Timeouts: {len(timeouts)}")
+    print(f"  Wins: {len(wins)}   Losses: {len(losses)}   Breakevens: {len(breakevens)}   Timeouts: {len(timeouts)}")
     print(f"Win rate (excl. timeouts): {win_rate:.1f}%")
     print(f"Average gross R-multiple (before costs): {avg_gross_r:+.2f}R")
     print(f"  minus avg fee cost: {avg_fee_r:.2f}R")

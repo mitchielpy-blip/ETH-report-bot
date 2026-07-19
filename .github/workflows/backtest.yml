@@ -35,6 +35,31 @@ on:
         description: "Comma-separated sessions to sit out (asia,europe,us). Blank = trade all (default)."
         required: false
         default: ""
+      exit_model:
+        description: "Exit management (indicator/price_action). fixed = set-and-forget (live default); breakeven = move stop to entry after +BREAKEVEN_AT_R; trailing = trail the stop behind the best price. Backtest-research only — do NOT set this on the live report/fill-checker workflows (there is no live position-manager yet)."
+        required: false
+        default: "fixed"
+        type: choice
+        options:
+          - fixed
+          - breakeven
+          - trailing
+      breakeven_at_r:
+        description: "Favourable R reached before the stop moves to breakeven (only used when exit_model=breakeven)."
+        required: false
+        default: "1.0"
+      trail_at_r:
+        description: "Favourable R before the trailing stop activates (only used when exit_model=trailing)."
+        required: false
+        default: "1.0"
+      trail_distance_r:
+        description: "How far (in R) the stop trails behind the best price (only used when exit_model=trailing)."
+        required: false
+        default: "1.0"
+      trail_honor_target:
+        description: "true = keep the fixed target as a hard cap; false (default) = let a trailing trade run past it (only used when exit_model=trailing)."
+        required: false
+        default: "false"
 
 jobs:
   backtest:
@@ -56,6 +81,11 @@ jobs:
           STRATEGY: ${{ github.event.inputs.strategy }}
           ADX_MIN: ${{ github.event.inputs.adx_min }}   # indicator strategy only
           SKIP_SESSIONS: ${{ github.event.inputs.skip_sessions }}   # sit out these sessions (indicator strategy)
+          EXIT_MODEL: ${{ github.event.inputs.exit_model }}   # fixed | breakeven | trailing — research knob, NOT wired to any live workflow
+          BREAKEVEN_AT_R: ${{ github.event.inputs.breakeven_at_r }}   # favourable R before the stop moves to entry
+          TRAIL_AT_R: ${{ github.event.inputs.trail_at_r }}   # favourable R before the trailing stop activates
+          TRAIL_DISTANCE_R: ${{ github.event.inputs.trail_distance_r }}   # how far (in R) the stop trails behind the best price
+          TRAIL_HONOR_TARGET: ${{ github.event.inputs.trail_honor_target }}   # true = keep target as a cap; false = ride past it
           OKX_PROXY: ${{ secrets.OKX_PROXY }}   # proxy OKX calls past the runner's geo-block
       - name: Upload results
         uses: actions/upload-artifact@v4

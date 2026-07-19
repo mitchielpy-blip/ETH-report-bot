@@ -96,6 +96,31 @@ VOLUME_LOW_RATIO = float(os.environ.get("VOLUME_LOW_RATIO", 0.7))          # bel
 # session was, across two independent 12-month windows).
 SKIP_SESSIONS = os.environ.get("SKIP_SESSIONS", "")
 SKIP_SESSIONS_SET = frozenset(s.strip().lower() for s in SKIP_SESSIONS.split(",") if s.strip())
+# Exit management. "fixed" (the default) is set-and-forget: a filled trade runs
+# to its original stop, its target, or the hold timeout — exactly what the live
+# bot delivers today (the hourly report posts entry/stop/target, fill_checker
+# confirms the fill, and nothing manages the position after that). "breakeven"
+# moves the stop up to entry once the trade has gone BREAKEVEN_AT_R in favour,
+# turning a pullback into a scratch instead of a loss. "trailing" trails the stop
+# behind the best price (see the TRAIL_* knobs below) so winners can run.
+#
+# IMPORTANT — backtest-research knob only. There is no live position-manager yet,
+# so the live report/fill-checker have no way to tell you to move your stop. This
+# MUST stay "fixed" on every live workflow, or the backtest would model an exit
+# the live alerts don't deliver (a phantom edge) and stop describing the bot.
+# Only backtest.py reads it, to measure whether breakeven beats fixed before any
+# live wiring is built.
+EXIT_MODEL = os.environ.get("EXIT_MODEL", "fixed")                       # fixed | breakeven | trailing
+BREAKEVEN_AT_R = float(os.environ.get("BREAKEVEN_AT_R", 1.0))            # favourable R before the stop moves to entry
+BREAKEVEN_BUFFER_R = float(os.environ.get("BREAKEVEN_BUFFER_R", 0.0))    # 0 = stop to exact entry; >0 leaves a small cushion past entry
+# Trailing-stop knobs (EXIT_MODEL=trailing). Once the trade's favourable
+# excursion clears TRAIL_AT_R, the stop trails TRAIL_DISTANCE_R behind the best
+# price and never loosens. By default a trailing trade ignores the fixed target
+# so winners can run past it (TRAIL_HONOR_TARGET=false); set it true to keep the
+# target as a hard cap and use the trail only for downside protection.
+TRAIL_AT_R = float(os.environ.get("TRAIL_AT_R", 1.0))                    # favourable R before the trail activates
+TRAIL_DISTANCE_R = float(os.environ.get("TRAIL_DISTANCE_R", 1.0))       # how far (in R) the stop trails behind the best price
+TRAIL_HONOR_TARGET = os.environ.get("TRAIL_HONOR_TARGET", "false").strip().lower() in ("1", "true", "yes")
 
 # How long a pending (unfilled) pullback entry stays live before being
 # discarded. Keep this equal to the backtest's ENTRY_WAIT_CANDLES (in
