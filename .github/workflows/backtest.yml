@@ -64,6 +64,14 @@ on:
         description: "FADE the bias score: take the opposite side of every signal the strategy would trade (same bars, flipped direction). Backtest-research only — do NOT set on the live report/fill-checker workflows."
         required: false
         default: "false"
+      atr_sl_mult:
+        description: "Stop distance in ATRs (stop = ATR * this). Lower = tighter stop, higher win rate but the R:R gate rejects more setups; higher = wider stop, fewer stop-outs but each loss is bigger. Live default 1.5. Sweep knob — change the live default only after it wins in both windows."
+        required: false
+        default: "1.5"
+      pullback_atr_mult:
+        description: "How deep a pullback entry to seek, in ATRs (entry = price -/+ ATR * this). Live default 0.7. Sweep knob — change the live default only after it wins in both windows."
+        required: false
+        default: "0.7"
 
 jobs:
   backtest:
@@ -91,6 +99,8 @@ jobs:
           TRAIL_DISTANCE_R: ${{ github.event.inputs.trail_distance_r }}   # how far (in R) the stop trails behind the best price
           TRAIL_HONOR_TARGET: ${{ github.event.inputs.trail_honor_target }}   # true = keep target as a cap; false = ride past it
           INVERT_SIGNAL: ${{ github.event.inputs.invert_signal }}   # fade the score — research knob, NOT wired to any live workflow
+          ATR_SL_MULT: ${{ github.event.inputs.atr_sl_mult }}   # stop distance in ATRs (live default 1.5)
+          PULLBACK_ATR_MULT: ${{ github.event.inputs.pullback_atr_mult }}   # pullback entry depth in ATRs (live default 0.7)
           OKX_PROXY: ${{ secrets.OKX_PROXY }}   # proxy OKX calls past the runner's geo-block
       - name: Upload results
         uses: actions/upload-artifact@v4
