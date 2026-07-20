@@ -321,7 +321,15 @@ def simulate_trade(candles, signal_index, plan, funding_events=None,
 
     if revalidate is None:
         def revalidate(idx):
-            return evaluate_signal_at(candles, idx, previous_raw_direction=direction, require_rr=False)
+            # The persistence gate re-checks the NATIVE call's stability, so feed
+            # it the plan's raw_direction, not the traded direction. They are equal
+            # for the fixed strategy (no behaviour change); under INVERT_SIGNAL the
+            # traded direction is flipped while raw_direction stays native, and
+            # passing the flipped one here would make the persistence gate reject
+            # every fill (raw_direction != flipped) and invalidate the whole run.
+            return evaluate_signal_at(candles, idx,
+                                      previous_raw_direction=plan.get("raw_direction", direction),
+                                      require_rr=False)
     fresh_plan = revalidate(fill_index)
     if not fresh_plan or fresh_plan["direction"] != direction:
         return "invalidated", 0.0, None, None, fill_index

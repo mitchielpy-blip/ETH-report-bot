@@ -19,6 +19,7 @@ import unittest
 from unittest import mock
 
 import eth_report_bot as bot
+import backtest as bt
 
 
 # htf_trend=None so the HTF gate never vetoes; adx high and previous_raw_direction
@@ -91,6 +92,36 @@ class FadeOffIsUnchanged(unittest.TestCase):
         self.assertEqual(base["direction"], "long")
         again = _plan(bot.LONG_SCORE_MIN, invert=False, **_LONG_KW)
         self.assertEqual(base, again)
+
+
+class FadeFillRevalidation(unittest.TestCase):
+    """Regression: simulate_trade's fill-time revalidation must feed the plan's
+    NATIVE raw_direction to the persistence gate, not the traded (possibly
+    flipped) direction. Passing the flipped side made the persistence gate reject
+    every fill under INVERT_SIGNAL -> 0 filled trades across the whole window."""
+
+    def test_revalidate_receives_native_raw_direction(self):
+        # A faded pending order: traded short, native call still long.
+        plan = {"direction": "short", "raw_direction": "long",
+                "entry": 100.0, "stop": 102.0, "target": 94.0}
+        # Price rises to the short entry (fill), then drops to the target (win).
+        candles = [
+            {"ts": 0, "open": 99.0, "high": 99.0, "low": 98.0, "close": 98.5},
+            {"ts": 1, "open": 99.0, "high": 101.0, "low": 99.0, "close": 100.5},
+            {"ts": 2, "open": 100.0, "high": 100.0, "low": 93.0, "close": 94.0},
+        ]
+        captured = {}
+
+        def fake_eval(cs, i, previous_raw_direction=None, require_rr=True):
+            captured["prd"] = previous_raw_direction
+            return {"direction": "short", "raw_direction": "long"}
+
+        with mock.patch.object(bt, "evaluate_signal_at", side_effect=fake_eval):
+            outcome = bt.simulate_trade(candles, 0, plan, wait=5, max_hold=5)[0]
+
+        # Native call, NOT the flipped "short" — the whole point of the fix.
+        self.assertEqual(captured["prd"], "long")
+        self.assertNotEqual(outcome, "invalidated")
 
 
 if __name__ == "__main__":
