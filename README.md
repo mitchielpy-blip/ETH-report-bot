@@ -13,6 +13,23 @@ Keep this section up to date whenever a real bug fix or parameter change
 goes live — it's the reference point for whether `forward_test_report.py`'s
 numbers are even measuring the strategy you think they are.
 
+> **BTC entry-depth tuning (2026-07-20, live, BTC-only).** Swept
+> `PULLBACK_ATR_MULT` and `ATR_SL_MULT` per-instrument across two independent
+> 12-month windows (recent + out-of-sample ending 2025-07-12), each matched to
+> live config. **BTC pullback deepened 0.7 → `PULLBACK_ATR_MULT=0.9`**: it beats
+> 0.7 out-of-sample (+0.25R → +0.29R net/trade) and ties it in-sample (+0.32R →
+> +0.33R) at a similar trade count, with both OOS half-splits positive. BTC's
+> tighter `ATR_SL_MULT=1.0` (already live) was re-confirmed as the only stop
+> width that wins both windows. Both are **BTC-only** — ETH is best-and-stable at
+> 0.7 / 1.5, SOL robust at 0.7 / 1.5 (its 0.9 pullback and 1.0 stop both fail to
+> replicate) — and both are set in `eth-report.yml` *and* `fill-checker.yml`
+> (parity). Caveat: the OOS runs captured zero funding events, so net-R
+> understates funding — a per-trade drag that only *understates* the
+> deeper-pullback edge. Also confirmed this window and left unchanged: the bias
+> score carries ~no directional information (calibration correlation ≈0; fading
+> it via `INVERT_SIGNAL` loses in every major cell), and `fixed` still beats every
+> managed-exit variant. Full sweep tables are in the parameter-research note below.
+>
 > **BTC added 2026-07-17.** `BTC-USDT-SWAP` now runs as a third instrument
 > alongside ETH and SOL (same indicator strategy, `ADX_MIN` 20, own
 > `state_btc.json` / `signals_log_btc.csv`, posts to the same Discord
@@ -249,9 +266,13 @@ numbers are even measuring the strategy you think they are.
   candidate there. Confirm with a full backtest before relying on it.
 - **Entry**: a volatility-scaled pullback (`PULLBACK_ATR_MULT` × ATR from
   current price, default 0.7 — see forward-test log above for why),
-  capped at the nearest support/resistance level if closer.
+  capped at the nearest support/resistance level if closer. BTC overrides
+  this to `0.9` (a deeper entry — validated in/out of sample; see the
+  parameter-research note below); ETH/SOL stay at 0.7.
 - **Stop-loss**: ATR(14) × `ATR_SL_MULT` (default 1.5) beyond entry — scales
-  with current volatility instead of a fixed dollar amount.
+  with current volatility instead of a fixed dollar amount. BTC overrides
+  this to `1.0` (a tighter stop — validated in/out of sample); ETH/SOL stay
+  at 1.5.
 - **Take-profit**: the next support/resistance level in that direction.
 - **Gate**: if the resulting reward:risk is below `MIN_RR` (default 1.5),
   no plan is published — you just get the reason why.
@@ -303,6 +324,68 @@ This is a rule template, backed by `backtest.py` and `backtest_sweep.py`
 so changes can be checked against history before going live — but no
 amount of backtesting guarantees future performance. Treat every
 parameter as provisional, not settled.
+
+### What the parameter research found (measure-first)
+
+Every tunable above has been swept on GitHub-hosted runners (`backtest.yml`,
+`pullback-sweep.yml`, `score-calibration.yml`) across ETH/SOL/BTC over two
+independent 12-month windows — a recent one and an out-of-sample one ending
+`2025-07-12` — with each instrument matched to its live config. The rule: a
+change only earns a live slot if it wins in **both** windows. What that turned
+up:
+
+**The bias score picks *which* bars to trade, not *which way*.** Calibration
+(each bar scored with no lookahead, bucketed against realized forward returns)
+put the score↔forward-return correlation at ≈0 everywhere (−0.01 to +0.02 across
+all three instruments, both windows). Where it wasn't flat it was faintly
+*contrarian* on the majors — but far too weak to harvest: taking the opposite
+side of every signal (`INVERT_SIGNAL`) **lost** in all four major-instrument
+cells (e.g. ETH −0.01R vs the +0.22R baseline; win rate ~50% → ~20%). So the
+score's job is regime/bar selection; the edge is structural (pullback entry +
+R:R gate + ATR stop), and the ~50% win rates confirm the direction call is near
+a coin-flip. Tuning `LONG_SCORE_MIN` / `SHORT_SCORE_MAX` can't sharpen
+information the score doesn't carry — the threshold is not "too tight," it's
+pointed at the wrong lever.
+
+**Stop width (`ATR_SL_MULT`) — best value is per-instrument.** Net R/trade
+(recent | OOS); **bold** = live:
+
+| Instrument | 1.0 | 1.5 | 2.0 |
+|------------|-----|-----|-----|
+| ETH | +0.27 \| +0.12 | **+0.22 \| +0.14** | +0.23 \| −0.04 |
+| SOL | +0.24 \| +0.15 | **+0.34 \| +0.24** | +0.31 \| +0.25 |
+| BTC | **+0.30 \| +0.25** | +0.19 \| +0.21 | +0.16 \| +0.14 |
+
+Only BTC has a replicated winner away from the 1.5 default — 1.0 leads in both
+windows with stable half-splits — which is why BTC alone runs `ATR_SL_MULT=1.0`.
+ETH's 1.0 edge doesn't survive OOS; SOL peaks at 1.5; 2.0 goes negative on ETH
+OOS.
+
+**Entry depth (`PULLBACK_ATR_MULT`) — net R/trade (recent | OOS);** **bold** =
+live:
+
+| Instrument | 0.5 | 0.7 | 0.9 | 1.2 |
+|------------|-----|-----|-----|-----|
+| ETH | +0.14 \| +0.12 | **+0.22 \| +0.14** | +0.15 \| +0.10 | +0.16 \| +0.23 |
+| SOL | +0.26 \| +0.14 | **+0.34 \| +0.25** | +0.15 \| +0.34 | +0.04 \| +0.24 |
+| BTC | +0.33 \| +0.13 | +0.32 \| +0.25 | **+0.33 \| +0.29** | +0.37 \| +0.38 |
+
+BTC is the only instrument where a deeper pullback replicates in both windows,
+so BTC runs `PULLBACK_ATR_MULT=0.9`: 0.9 beats 0.7 out-of-sample and ties it
+in-sample at a similar trade count. 1.2 posts the best *per-trade* number in
+both windows, but its ~20% fill rate lowers *total* compounded return in the
+recent window, so 0.9 is the balanced pick. ETH is best-and-stable at 0.7;
+SOL's 0.7 is robust while 0.9 collapses in-sample.
+
+**Exits:** see the `EXIT_MODEL` table above — `fixed` wins net expectancy on
+every instrument; no managed-exit variant beats it.
+
+**One caveat across all of it:** OKX serves only a limited rolling window of
+funding history, so the out-of-sample runs captured **zero** funding events and
+every net-R figure understates real funding cost. Funding is a per-trade drag,
+so it biases *against* higher-trade-count settings — slightly flattering the
+tighter-stop / shallower-pullback options and slightly *understating* BTC's
+deeper-pullback edge. Treat the OOS numbers as directional, not exact.
 
 ## Choosing a strategy (`STRATEGY` env var)
 
