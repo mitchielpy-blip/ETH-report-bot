@@ -164,3 +164,4 @@ logged_at_ts,price,direction,entry,stop,target,rr,reason
 1784552456805,76.71,,,,,,4H trend is bearish — skipping long to avoid fighting the higher timeframe.
 1784556049904,76.24,,,,,,4H trend is bearish — skipping long to avoid fighting the higher timeframe.
 1784559657189,76.1,,,,,,Signal isn't clear enough (score is in the neutral zone) — sitting out this hour.
+1784563250902,77.72,,,,,,Long signal just appeared this hour — waiting one more hour to confirm it's not noise.
