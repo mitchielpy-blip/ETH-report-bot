@@ -67,6 +67,20 @@ RETRY_BACKOFF_SECONDS = 2
 # real performance — treat as a starting template for your own rules.
 LONG_SCORE_MIN = float(os.environ.get("LONG_SCORE_MIN", 62))   # score >= this -> consider long
 SHORT_SCORE_MAX = float(os.environ.get("SHORT_SCORE_MAX", 45))  # score <= this -> consider short
+# Contrarian override — FADE the bias score. When True, every trade the strategy
+# would take is entered on the OPPOSITE side: a long-zone score (>= LONG_SCORE_MIN)
+# is traded short, a short-zone score (<= SHORT_SCORE_MAX) is traded long. The flip
+# happens AFTER every native-direction gate (ADX / HTF / persistence / session) has
+# run, so the SET of bars selected is identical to the fixed strategy — only the
+# side changes. That isolates the single question "what if I'd taken the other side
+# of every signal", motivated by score_calibration.py showing the raw score is
+# anti-predictive on ETH/BTC (high score -> below-average forward returns).
+#
+# IMPORTANT — backtest-research knob only, default OFF so live is byte-identical.
+# Do NOT set INVERT_SIGNAL on any live workflow (eth-report.yml / fill-checker.yml):
+# it exists purely to A/B the fade hypothesis in the backtest before any of it is
+# considered for live use.
+INVERT_SIGNAL = os.environ.get("INVERT_SIGNAL", "0").strip().lower() in ("1", "true", "yes")
 ATR_SL_MULT = float(os.environ.get("ATR_SL_MULT", 1.5))         # stop distance = ATR * this
 MIN_RR = float(os.environ.get("MIN_RR", 1.5))                    # minimum reward:risk to publish a plan
 PULLBACK_ATR_MULT = float(os.environ.get("PULLBACK_ATR_MULT", 0.7))  # how deep a pullback entry to seek, in ATRs
@@ -618,6 +632,16 @@ def suggest_trade_plan(price, score, atr_value, supports, resistances, htf_trend
         return {"direction": None, "reason": f"{HTF_BAR} trend is bearish — skipping long to avoid fighting the higher timeframe.", "raw_direction": raw_direction}
     if htf_trend == "bullish" and direction == "short":
         return {"direction": None, "reason": f"{HTF_BAR} trend is bullish — skipping short to avoid fighting the higher timeframe.", "raw_direction": raw_direction}
+
+    # Fade override (backtest-research, default off). Flip to the opposite side
+    # only now — after every native-direction gate above has decided this bar is
+    # tradeable — so the selected bar SET matches the fixed strategy exactly and
+    # only the side is inverted. raw_direction stays the score's native call so
+    # the hour-to-hour persistence check is unaffected; the levels, R:R gate and
+    # returned direction below all use the flipped side, i.e. the trade actually
+    # taken. Never set on a live workflow (see INVERT_SIGNAL in the config block).
+    if INVERT_SIGNAL:
+        direction = "short" if direction == "long" else "long"
 
     entry, stop, target = build_entry_levels(direction, price, atr_value, supports, resistances)
     if direction == "long":

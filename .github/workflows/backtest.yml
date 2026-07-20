@@ -60,6 +60,10 @@ on:
         description: "true = keep the fixed target as a hard cap; false (default) = let a trailing trade run past it (only used when exit_model=trailing)."
         required: false
         default: "false"
+      invert_signal:
+        description: "FADE the bias score: take the opposite side of every signal the strategy would trade (same bars, flipped direction). Backtest-research only — do NOT set on the live report/fill-checker workflows."
+        required: false
+        default: "false"
 
 jobs:
   backtest:
@@ -86,6 +90,7 @@ jobs:
           TRAIL_AT_R: ${{ github.event.inputs.trail_at_r }}   # favourable R before the trailing stop activates
           TRAIL_DISTANCE_R: ${{ github.event.inputs.trail_distance_r }}   # how far (in R) the stop trails behind the best price
           TRAIL_HONOR_TARGET: ${{ github.event.inputs.trail_honor_target }}   # true = keep target as a cap; false = ride past it
+          INVERT_SIGNAL: ${{ github.event.inputs.invert_signal }}   # fade the score — research knob, NOT wired to any live workflow
           OKX_PROXY: ${{ secrets.OKX_PROXY }}   # proxy OKX calls past the runner's geo-block
       - name: Upload results
         uses: actions/upload-artifact@v4
