@@ -54,6 +54,16 @@ jobs:
           # Parity-safe: ATR_SL_MULT sizes the stop at signal time (part of the plan the
           # alert posts), so live and backtest still derive the same behaviour.
           ATR_SL_MULT: "1.0"
+          # Deeper pullback entry for BTC only (0.9x ATR vs the 0.7x default). Validated
+          # in-sample AND out-of-sample (window ending 2025-07-12): 0.9 lifts BTC net
+          # expectancy +0.25R->+0.29R/trade OOS and ties it in-sample (+0.32R->+0.33R),
+          # at a similar trade count, with both OOS half-splits positive. The funding-
+          # coverage gap flatters shallower (higher-volume) settings, so 0.9's edge is if
+          # anything understated. ETH/SOL are best at 0.7 (ETH unstable OOS; SOL's 0.7 is
+          # robust while 0.9 collapses in-sample), so this stays per-instrument. Parity-
+          # safe: PULLBACK_ATR_MULT places the entry at signal time (part of the posted
+          # plan), so live and backtest still derive the same behaviour.
+          PULLBACK_ATR_MULT: "0.9"
       - name: Save signal state and log
         if: always()
         run: |
