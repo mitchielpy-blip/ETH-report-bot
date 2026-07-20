@@ -674,6 +674,13 @@ def main():
     else:
         walker = walk_forward
         target_count = target_count_for(args.bar, args.months)
+        # Echo the research knobs so every run's log is self-describing (which
+        # matters when sweeping the multipliers across many otherwise-identical
+        # dispatches). Live defaults: sl=1.5, pullback=0.7, exit=fixed, invert off.
+        print(f"CONFIG: entry_mode={bot.ENTRY_MODE} atr_sl_mult={bot.ATR_SL_MULT} "
+              f"pullback_atr_mult={bot.PULLBACK_ATR_MULT} min_rr={bot.MIN_RR} "
+              f"adx_min={bot.ADX_MIN} skip_sessions='{bot.SKIP_SESSIONS}' "
+              f"exit_model={bot.EXIT_MODEL} invert_signal={bot.INVERT_SIGNAL}")
 
     end_ts = parse_end_ts(args.end_date)
 
