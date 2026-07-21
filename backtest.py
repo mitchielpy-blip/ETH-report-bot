@@ -48,7 +48,7 @@ OKX_BASE = bot.OKX_BASE   # honours the OKX_BASE env override from eth_report_bo
 OKX_PROXIES = bot.OKX_PROXIES  # route OKX calls through OKX_PROXY when set (geo-block workaround)
 PAGE_LIMIT = 100          # OKX history-candles max per request
 MAX_HOLD_CANDLES = 72     # give a filled trade up to 72 bars to hit SL/TP before timing out
-ENTRY_WAIT_CANDLES = int(os.environ.get("ENTRY_WAIT_HOURS", 8))   # give a pending pullback order this many bars to actually fill (assumes 1H bars)
+ENTRY_WAIT_CANDLES = int(os.environ.get("ENTRY_WAIT_HOURS", 24))   # give a pending pullback order this many bars to actually fill (assumes 1H bars). 24 (was 8): kept equal to the live lifetime constants; longer window validated in/out of sample (see eth_report_bot.py)
 WARMUP_CANDLES = 260      # candles needed before the first signal can be evaluated
 RISK_PER_TRADE_PCT = 1.0  # for the equity curve simulation only
 
@@ -321,7 +321,15 @@ def simulate_trade(candles, signal_index, plan, funding_events=None,
 
     if revalidate is None:
         def revalidate(idx):
-            return evaluate_signal_at(candles, idx, previous_raw_direction=direction, require_rr=False)
+            # The persistence gate re-checks the NATIVE call's stability, so feed
+            # it the plan's raw_direction, not the traded direction. They are equal
+            # for the fixed strategy (no behaviour change); under INVERT_SIGNAL the
+            # traded direction is flipped while raw_direction stays native, and
+            # passing the flipped one here would make the persistence gate reject
+            # every fill (raw_direction != flipped) and invalidate the whole run.
+            return evaluate_signal_at(candles, idx,
+                                      previous_raw_direction=plan.get("raw_direction", direction),
+                                      require_rr=False)
     fresh_plan = revalidate(fill_index)
     if not fresh_plan or fresh_plan["direction"] != direction:
         return "invalidated", 0.0, None, None, fill_index
@@ -666,6 +674,14 @@ def main():
     else:
         walker = walk_forward
         target_count = target_count_for(args.bar, args.months)
+        # Echo the research knobs so every run's log is self-describing (which
+        # matters when sweeping the multipliers across many otherwise-identical
+        # dispatches). Live defaults: sl=1.5, pullback=0.7, exit=fixed, invert off.
+        print(f"CONFIG: entry_mode={bot.ENTRY_MODE} atr_sl_mult={bot.ATR_SL_MULT} "
+              f"pullback_atr_mult={bot.PULLBACK_ATR_MULT} min_rr={bot.MIN_RR} "
+              f"adx_min={bot.ADX_MIN} skip_sessions='{bot.SKIP_SESSIONS}' "
+              f"entry_wait={ENTRY_WAIT_CANDLES} "
+              f"exit_model={bot.EXIT_MODEL} invert_signal={bot.INVERT_SIGNAL}")
 
     end_ts = parse_end_ts(args.end_date)
 

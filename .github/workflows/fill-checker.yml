@@ -41,6 +41,8 @@ jobs:
           # plan the fill-time re-validation rebuilds uses the same stop basis. See
           # eth-report.yml's BTC step for the in-/out-of-sample validation.
           ATR_SL_MULT: "1.0"
+          # BTC entry pullback left at the 0.7 default (no override), matching the report
+          # step. See eth-report.yml's BTC step / the README parameter-research note.
       - name: ETH price-action fill check
         if: always()   # watch the price-action strategy's pending entries too
         run: python fill_checker.py

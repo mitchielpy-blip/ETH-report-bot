@@ -54,6 +54,10 @@ jobs:
           # Parity-safe: ATR_SL_MULT sizes the stop at signal time (part of the plan the
           # alert posts), so live and backtest still derive the same behaviour.
           ATR_SL_MULT: "1.0"
+          # BTC entry pullback is left at the 0.7 default (no override). A 0.9 depth
+          # tested marginally higher on per-trade expectancy but filled far less often
+          # (~35% vs ~50%); 0.7 keeps more fills at still-strong expectancy, which is the
+          # preferred trade-off for BTC. See the README parameter-research note.
       - name: Save signal state and log
         if: always()
         run: |

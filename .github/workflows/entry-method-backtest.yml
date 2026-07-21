@@ -23,6 +23,22 @@ on:
         description: "Optional: end date for the window, e.g. 2024-06-01 (leave blank for most recent data)"
         required: false
         default: ""
+      skip_sessions:
+        description: "Comma-separated sessions to sit out (match live: blank for ETH/SOL, 'asia' for BTC)."
+        required: false
+        default: ""
+      atr_sl_mult:
+        description: "Stop distance in ATRs (match live: 1.5 for ETH/SOL, 1.0 for BTC)."
+        required: false
+        default: "1.5"
+      pullback_atr_mult:
+        description: "Pullback entry depth in ATRs, used by the pullback mode (match live: 0.7 for ETH/SOL, 0.9 for BTC)."
+        required: false
+        default: "0.7"
+      adx_min:
+        description: "Minimum ADX to allow a trade (match live: 20)."
+        required: false
+        default: "20"
 
 jobs:
   compare:
@@ -41,6 +57,10 @@ jobs:
           fi
           python -u entry_method_backtest.py $ARGS
         env:
+          SKIP_SESSIONS: ${{ github.event.inputs.skip_sessions }}   # match live: 'asia' for BTC
+          ATR_SL_MULT: ${{ github.event.inputs.atr_sl_mult }}   # match live: 1.0 for BTC
+          PULLBACK_ATR_MULT: ${{ github.event.inputs.pullback_atr_mult }}   # match live: 0.9 for BTC (used by pullback mode)
+          ADX_MIN: ${{ github.event.inputs.adx_min }}
           OKX_PROXY: ${{ secrets.OKX_PROXY }}   # proxy OKX calls past the runner's geo-block
       - name: Upload results
         uses: actions/upload-artifact@v4

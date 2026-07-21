@@ -13,6 +13,39 @@ Keep this section up to date whenever a real bug fix or parameter change
 goes live — it's the reference point for whether `forward_test_report.py`'s
 numbers are even measuring the strategy you think they are.
 
+> **Entry-wait extended 8h → 24h (2026-07-21, live, all instruments).** A pending
+> pullback order now stays live for **24 hours** instead of 8 before it expires
+> unfilled — `PENDING_ENTRY_LIFETIME_HOURS` (report), `PENDING_ORDER_EXPIRY_HOURS`
+> (fill-checker) and the backtest's `ENTRY_WAIT_CANDLES` all moved together so the
+> three still agree. Validated in and out of sample at each instrument's live
+> config: recovering the "slow pullback" fills that used to expire is a clear win on
+> **ETH** (+0.22R → +0.27R recent, +0.14R → +0.18R OOS, drawdown lower) and
+> neutral-to-positive on **BTC** (flat +0.32R recent, +0.25R → +0.28R OOS) and
+> **SOL** (flat ~+0.34R / +0.24R) — each with a few more fills and flat/lower
+> drawdown, so net-positive as a global change. Safe because the fill-time
+> re-validation still discards a pending order whose direction has since flipped, so
+> the longer window can't fill a stale/wrong signal (the "invalidated before fill"
+> count rises as the window grows). Companion finding, left unchanged: taking every
+> signal at **market** instead of waiting for the pullback earns far *less* in every
+> window (e.g. ETH equity 130 → 116; ETH and BTC *lose* out-of-sample), because the
+> ~half of signals that never retrace are extended moves that make poor entries —
+> the no-fills are protective, not lost profit.
+>
+> **Entry/stop multiplier sweep (2026-07-20, BTC-only stop confirmed).** Swept
+> `PULLBACK_ATR_MULT` and `ATR_SL_MULT` per-instrument across two independent
+> 12-month windows (recent + out-of-sample ending 2025-07-12), each matched to
+> live config. BTC's tighter `ATR_SL_MULT=1.0` (already live) was re-confirmed as
+> the only stop width that wins both windows; ETH/SOL stay at 1.5. On entry depth,
+> BTC was the only instrument where going deeper (`PULLBACK_ATR_MULT=0.9`) raised
+> per-trade expectancy in both windows (+0.32R → +0.33R recent, +0.25R → +0.29R
+> OOS) — but 0.9 also cut BTC's fill rate from ~50% to ~35%, and that extra
+> per-trade edge wasn't worth roughly a third fewer fills, so **BTC stays at the
+> 0.7 default** (briefly ran 0.9, reverted). ETH/SOL are best at 0.7 too. Also
+> confirmed this window and left unchanged: the bias score carries ~no directional
+> information (calibration correlation ≈0; fading it via `INVERT_SIGNAL` loses in
+> every major cell), and `fixed` still beats every managed-exit variant. Full sweep
+> tables are in the parameter-research note below.
+>
 > **BTC added 2026-07-17.** `BTC-USDT-SWAP` now runs as a third instrument
 > alongside ETH and SOL (same indicator strategy, `ADX_MIN` 20, own
 > `state_btc.json` / `signals_log_btc.csv`, posts to the same Discord
@@ -249,9 +282,14 @@ numbers are even measuring the strategy you think they are.
   candidate there. Confirm with a full backtest before relying on it.
 - **Entry**: a volatility-scaled pullback (`PULLBACK_ATR_MULT` × ATR from
   current price, default 0.7 — see forward-test log above for why),
-  capped at the nearest support/resistance level if closer.
+  capped at the nearest support/resistance level if closer. All three
+  instruments use 0.7; a deeper 0.9 was tested for BTC (marginally higher
+  per-trade edge) but filled far less often, so BTC keeps 0.7 for more fills
+  (see the parameter-research note below).
 - **Stop-loss**: ATR(14) × `ATR_SL_MULT` (default 1.5) beyond entry — scales
-  with current volatility instead of a fixed dollar amount.
+  with current volatility instead of a fixed dollar amount. BTC overrides
+  this to `1.0` (a tighter stop — validated in/out of sample); ETH/SOL stay
+  at 1.5.
 - **Take-profit**: the next support/resistance level in that direction.
 - **Gate**: if the resulting reward:risk is below `MIN_RR` (default 1.5),
   no plan is published — you just get the reason why.
@@ -303,6 +341,82 @@ This is a rule template, backed by `backtest.py` and `backtest_sweep.py`
 so changes can be checked against history before going live — but no
 amount of backtesting guarantees future performance. Treat every
 parameter as provisional, not settled.
+
+### What the parameter research found (measure-first)
+
+Every tunable above has been swept on GitHub-hosted runners (`backtest.yml`,
+`pullback-sweep.yml`, `score-calibration.yml`) across ETH/SOL/BTC over two
+independent 12-month windows — a recent one and an out-of-sample one ending
+`2025-07-12` — with each instrument matched to its live config. The rule: a
+change only earns a live slot if it wins in **both** windows. What that turned
+up:
+
+**The bias score picks *which* bars to trade, not *which way*.** Calibration
+(each bar scored with no lookahead, bucketed against realized forward returns)
+put the score↔forward-return correlation at ≈0 everywhere (−0.01 to +0.02 across
+all three instruments, both windows). Where it wasn't flat it was faintly
+*contrarian* on the majors — but far too weak to harvest: taking the opposite
+side of every signal (`INVERT_SIGNAL`) **lost** in all four major-instrument
+cells (e.g. ETH −0.01R vs the +0.22R baseline; win rate ~50% → ~20%). So the
+score's job is regime/bar selection; the edge is structural (pullback entry +
+R:R gate + ATR stop), and the ~50% win rates confirm the direction call is near
+a coin-flip. Tuning `LONG_SCORE_MIN` / `SHORT_SCORE_MAX` can't sharpen
+information the score doesn't carry — the threshold is not "too tight," it's
+pointed at the wrong lever.
+
+**Stop width (`ATR_SL_MULT`) — best value is per-instrument.** Net R/trade
+(recent | OOS); **bold** = live:
+
+| Instrument | 1.0 | 1.5 | 2.0 |
+|------------|-----|-----|-----|
+| ETH | +0.27 \| +0.12 | **+0.22 \| +0.14** | +0.23 \| −0.04 |
+| SOL | +0.24 \| +0.15 | **+0.34 \| +0.24** | +0.31 \| +0.25 |
+| BTC | **+0.30 \| +0.25** | +0.19 \| +0.21 | +0.16 \| +0.14 |
+
+Only BTC has a replicated winner away from the 1.5 default — 1.0 leads in both
+windows with stable half-splits — which is why BTC alone runs `ATR_SL_MULT=1.0`.
+ETH's 1.0 edge doesn't survive OOS; SOL peaks at 1.5; 2.0 goes negative on ETH
+OOS.
+
+**Entry depth (`PULLBACK_ATR_MULT`) — net R/trade (recent | OOS);** **bold** =
+live:
+
+| Instrument | 0.5 | 0.7 | 0.9 | 1.2 |
+|------------|-----|-----|-----|-----|
+| ETH | +0.14 \| +0.12 | **+0.22 \| +0.14** | +0.15 \| +0.10 | +0.16 \| +0.23 |
+| SOL | +0.26 \| +0.14 | **+0.34 \| +0.25** | +0.15 \| +0.34 | +0.04 \| +0.24 |
+| BTC | +0.33 \| +0.13 | **+0.32 \| +0.25** | +0.33 \| +0.29 | +0.37 \| +0.38 |
+
+All three instruments run `PULLBACK_ATR_MULT=0.7`. BTC is the one instrument
+where going *deeper* (0.9/1.2) raises per-trade expectancy in both windows, but
+each step deeper also cuts the fill rate hard (0.7 ≈ 50% fill, 0.9 ≈ 35%, 1.2 ≈
+20%). BTC briefly ran 0.9, but the extra per-trade edge (+0.32→+0.33R recent,
++0.25→+0.29R OOS) wasn't worth roughly a third fewer fills, so it was reverted to
+0.7 — still strongly positive, and far less prone to the "signal never fills"
+frustration. ETH is best-and-stable at 0.7; SOL's 0.7 is robust while 0.9
+collapses in-sample. So 0.7 is the right value everywhere.
+
+**Exits:** see the `EXIT_MODEL` table above — `fixed` wins net expectancy on
+every instrument; no managed-exit variant beats it.
+
+**Getting filled — waiting longer helps, chasing fills doesn't.** Only ~half of
+signals ever retrace to the pullback entry; the rest "leave without you." Two
+measured results on that: (1) taking every signal at **market** (fills ~90%+)
+instead of waiting earns *less* in every window — negative out-of-sample on ETH
+and BTC — because the signals that never pull back are extended moves that make
+poor entries, so the pullback filter is load-bearing. (2) But *extending the
+pending-order lifetime* from 8h → 24h recovers the slow pullbacks that used to
+expire: a clear win on ETH (+0.22R → +0.27R, lower drawdown) and neutral-to-positive
+on BTC (flat recent, +0.25R → +0.28R OOS) and SOL (flat), each with a few more fills.
+That's now live (`PENDING_ENTRY_LIFETIME_HOURS=24`, kept equal to the fill-checker
+and backtest lifetimes).
+
+**One caveat across all of it:** OKX serves only a limited rolling window of
+funding history, so the out-of-sample runs captured **zero** funding events and
+every net-R figure understates real funding cost. Funding is a per-trade drag,
+so it biases *against* higher-trade-count settings — slightly flattering the
+tighter-stop / shallower-pullback options and slightly *understating* BTC's
+deeper-pullback edge. Treat the OOS numbers as directional, not exact.
 
 ## Choosing a strategy (`STRATEGY` env var)
 
