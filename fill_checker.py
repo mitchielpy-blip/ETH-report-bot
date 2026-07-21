@@ -108,11 +108,12 @@ def main():
               f"longer holds ({reason}) — skipping the fill and discarding the pending "
               f"order, matching the backtest's invalidation of stale pullbacks.")
         bot.post_to_discord(
-            f"**Setup invalidated** · {direction.upper()} @ ${entry:,.2f} was touched, "
-            f"but the signal no longer holds ({reason}).\n"
-            f"Standing aside — no trade. _The pullback level from the last hourly report "
-            f"was reached, but the setup broke down before fill, so the bot is skipping it "
-            f"rather than entering a stale trade._"
+            f"@here 🚨 **SETUP INVALIDATED** · {direction.upper()} @ ${entry:,.2f}\n"
+            f"The pullback level was touched, but the signal no longer holds ({reason}) — "
+            f"**the bot is standing aside, no trade.**\n"
+            f"_If you had a resting limit order here and it already triggered, close that "
+            f"position now for a scratch rather than holding a setup the bot rejected. The "
+            f"level from the last hourly report was reached, but the setup broke down first._"
         )
         state["direction"] = None
         bot.save_state(state)
