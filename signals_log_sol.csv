@@ -181,3 +181,4 @@ logged_at_ts,price,direction,entry,stop,target,rr,reason
 1784613647375,78.41,,,,,,4H trend is bearish — skipping long to avoid fighting the higher timeframe.
 1784617253145,78.61,,,,,,4H trend is bearish — skipping long to avoid fighting the higher timeframe.
 1784620849014,78.53,long,78.1795,77.42842857142857,79.30610714285714,1.4999999999999811,
+1784624454036,78.32,long,77.98899999999999,77.27971428571428,79.05292857142857,1.50000000000001,
