@@ -17,18 +17,19 @@ numbers are even measuring the strategy you think they are.
 > pullback order now stays live for **24 hours** instead of 8 before it expires
 > unfilled — `PENDING_ENTRY_LIFETIME_HOURS` (report), `PENDING_ORDER_EXPIRY_HOURS`
 > (fill-checker) and the backtest's `ENTRY_WAIT_CANDLES` all moved together so the
-> three still agree. Validated in and out of sample: recovering the "slow pullback"
-> fills that used to expire lifts **ETH +0.22R → +0.27R** and **BTC +0.33R →
-> +0.39R** (recent; both windows agree, drawdown flat-to-lower) and is a **wash on
-> SOL** (expectancy flat ~+0.34R / +0.24R, a few more fills, ~+1pt DD) — net-positive
-> as a global change. Safe because the fill-time re-validation still discards a
-> pending order whose direction has since flipped, so the longer window can't fill a
-> stale/wrong signal (the "invalidated before fill" count rises as the window grows).
-> Companion finding, left unchanged: taking every signal at **market** instead of
-> waiting for the pullback earns far *less* in every window (ETH equity 130 → 116,
-> BTC 182 → 129; ETH and BTC *lose* out-of-sample), because the ~half of signals that
-> never retrace are extended moves that make poor entries — the no-fills are
-> protective, not lost profit.
+> three still agree. Validated in and out of sample at each instrument's live
+> config: recovering the "slow pullback" fills that used to expire is a clear win on
+> **ETH** (+0.22R → +0.27R recent, +0.14R → +0.18R OOS, drawdown lower) and
+> neutral-to-positive on **BTC** (flat +0.32R recent, +0.25R → +0.28R OOS) and
+> **SOL** (flat ~+0.34R / +0.24R) — each with a few more fills and flat/lower
+> drawdown, so net-positive as a global change. Safe because the fill-time
+> re-validation still discards a pending order whose direction has since flipped, so
+> the longer window can't fill a stale/wrong signal (the "invalidated before fill"
+> count rises as the window grows). Companion finding, left unchanged: taking every
+> signal at **market** instead of waiting for the pullback earns far *less* in every
+> window (e.g. ETH equity 130 → 116; ETH and BTC *lose* out-of-sample), because the
+> ~half of signals that never retrace are extended moves that make poor entries —
+> the no-fills are protective, not lost profit.
 >
 > **Entry/stop multiplier sweep (2026-07-20, BTC-only stop confirmed).** Swept
 > `PULLBACK_ATR_MULT` and `ATR_SL_MULT` per-instrument across two independent
@@ -405,9 +406,10 @@ instead of waiting earns *less* in every window — negative out-of-sample on ET
 and BTC — because the signals that never pull back are extended moves that make
 poor entries, so the pullback filter is load-bearing. (2) But *extending the
 pending-order lifetime* from 8h → 24h recovers the slow pullbacks that used to
-expire: +0.22R → +0.27R (ETH), +0.33R → +0.39R (BTC), both windows, flat-to-lower
-drawdown; neutral on SOL. That's now live (`PENDING_ENTRY_LIFETIME_HOURS=24`, kept
-equal to the fill-checker and backtest lifetimes).
+expire: a clear win on ETH (+0.22R → +0.27R, lower drawdown) and neutral-to-positive
+on BTC (flat recent, +0.25R → +0.28R OOS) and SOL (flat), each with a few more fills.
+That's now live (`PENDING_ENTRY_LIFETIME_HOURS=24`, kept equal to the fill-checker
+and backtest lifetimes).
 
 **One caveat across all of it:** OKX serves only a limited rolling window of
 funding history, so the out-of-sample runs captured **zero** funding events and
