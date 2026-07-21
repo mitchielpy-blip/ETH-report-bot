@@ -72,6 +72,10 @@ on:
         description: "How deep a pullback entry to seek, in ATRs (entry = price -/+ ATR * this). Live default 0.7. Sweep knob — change the live default only after it wins in both windows."
         required: false
         default: "0.7"
+      entry_wait_hours:
+        description: "How many bars a pending pullback order stays live before it expires unfilled. Live default 8. Higher = recover slow pullbacks (more fills) at the cost of acting on a staler signal."
+        required: false
+        default: "8"
 
 jobs:
   backtest:
@@ -101,6 +105,7 @@ jobs:
           INVERT_SIGNAL: ${{ github.event.inputs.invert_signal }}   # fade the score — research knob, NOT wired to any live workflow
           ATR_SL_MULT: ${{ github.event.inputs.atr_sl_mult }}   # stop distance in ATRs (live default 1.5)
           PULLBACK_ATR_MULT: ${{ github.event.inputs.pullback_atr_mult }}   # pullback entry depth in ATRs (live default 0.7)
+          ENTRY_WAIT_HOURS: ${{ github.event.inputs.entry_wait_hours }}   # bars a pending order stays live (live default 8)
           OKX_PROXY: ${{ secrets.OKX_PROXY }}   # proxy OKX calls past the runner's geo-block
       - name: Upload results
         uses: actions/upload-artifact@v4
