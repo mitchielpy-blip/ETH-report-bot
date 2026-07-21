@@ -140,7 +140,13 @@ TRAIL_HONOR_TARGET = os.environ.get("TRAIL_HONOR_TARGET", "false").strip().lower
 # discarded. Keep this equal to the backtest's ENTRY_WAIT_CANDLES (in
 # hours, for 1H bars) and fill_checker's PENDING_ORDER_EXPIRY_HOURS so
 # all three components agree on an order's lifetime.
-PENDING_ENTRY_LIFETIME_HOURS = float(os.environ.get("PENDING_ENTRY_LIFETIME_HOURS", 8))
+# 24 (was 8): a longer fill window recovers "slow pullback" entries that
+# arrive after ~8h instead of expiring. Validated in and out of sample: it
+# lifts ETH expectancy +0.22R->+0.27R and BTC +0.33R->+0.39R (recent) with
+# lower/flat drawdown, and is a wash on SOL (flat expectancy, a few more
+# fills). Safe because the fill-time re-validation still discards a pending
+# order whose direction has since flipped, so a staler signal can't fill wrong.
+PENDING_ENTRY_LIFETIME_HOURS = float(os.environ.get("PENDING_ENTRY_LIFETIME_HOURS", 24))
 
 # Which strategy the "candles -> plan" seam runs:
 #   "indicator"    (default) — the original RSI/MACD/EMA/ADX/volume bias-score

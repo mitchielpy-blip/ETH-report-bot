@@ -48,7 +48,7 @@ OKX_BASE = bot.OKX_BASE   # honours the OKX_BASE env override from eth_report_bo
 OKX_PROXIES = bot.OKX_PROXIES  # route OKX calls through OKX_PROXY when set (geo-block workaround)
 PAGE_LIMIT = 100          # OKX history-candles max per request
 MAX_HOLD_CANDLES = 72     # give a filled trade up to 72 bars to hit SL/TP before timing out
-ENTRY_WAIT_CANDLES = int(os.environ.get("ENTRY_WAIT_HOURS", 8))   # give a pending pullback order this many bars to actually fill (assumes 1H bars)
+ENTRY_WAIT_CANDLES = int(os.environ.get("ENTRY_WAIT_HOURS", 24))   # give a pending pullback order this many bars to actually fill (assumes 1H bars). 24 (was 8): kept equal to the live lifetime constants; longer window validated in/out of sample (see eth_report_bot.py)
 WARMUP_CANDLES = 260      # candles needed before the first signal can be evaluated
 RISK_PER_TRADE_PCT = 1.0  # for the equity curve simulation only
 

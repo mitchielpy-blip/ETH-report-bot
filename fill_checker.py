@@ -25,7 +25,10 @@ from datetime import datetime, timezone
 
 import eth_report_bot as bot
 
-PENDING_ORDER_EXPIRY_HOURS = float(os.environ.get("PENDING_ORDER_EXPIRY_HOURS", 8))
+# 24 (was 8): kept equal to eth_report_bot.PENDING_ENTRY_LIFETIME_HOURS and the
+# backtest's ENTRY_WAIT_CANDLES so all three agree on a pending order's lifetime.
+# See eth_report_bot.py for the in/out-of-sample validation of the longer window.
+PENDING_ORDER_EXPIRY_HOURS = float(os.environ.get("PENDING_ORDER_EXPIRY_HOURS", 24))
 
 
 def main():
