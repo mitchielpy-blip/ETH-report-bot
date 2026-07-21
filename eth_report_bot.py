@@ -81,6 +81,18 @@ SHORT_SCORE_MAX = float(os.environ.get("SHORT_SCORE_MAX", 45))  # score <= this 
 # it exists purely to A/B the fade hypothesis in the backtest before any of it is
 # considered for live use.
 INVERT_SIGNAL = os.environ.get("INVERT_SIGNAL", "0").strip().lower() in ("1", "true", "yes")
+# Disable the higher-timeframe (HTF_BAR, default 4H) trend veto that stops longs
+# in a bearish 4H trend and shorts in a bullish one. Exists to A/B whether that
+# filter earns its keep: does dropping HTF-disagreeing trades add expectancy, or
+# is it just trimming trades that would have been fine? The diagnostics-only
+# By-HTF-trend bucketing can't answer that (it only sees trades the filter already
+# let through) — you need a filter-on vs filter-off backtest, which this knob gives.
+#
+# IMPORTANT — backtest-research knob only, default OFF so live is byte-identical.
+# Do NOT set DISABLE_HTF_FILTER on any live workflow (eth-report.yml /
+# fill-checker.yml): it exists purely to measure the filter's value in the
+# backtest before any change is considered for live use.
+DISABLE_HTF_FILTER = os.environ.get("DISABLE_HTF_FILTER", "0").strip().lower() in ("1", "true", "yes")
 ATR_SL_MULT = float(os.environ.get("ATR_SL_MULT", 1.5))         # stop distance = ATR * this
 MIN_RR = float(os.environ.get("MIN_RR", 1.5))                    # minimum reward:risk to publish a plan
 PULLBACK_ATR_MULT = float(os.environ.get("PULLBACK_ATR_MULT", 0.7))  # how deep a pullback entry to seek, in ATRs
@@ -634,10 +646,14 @@ def suggest_trade_plan(price, score, atr_value, supports, resistances, htf_trend
 
     direction = raw_direction
 
-    if htf_trend == "bearish" and direction == "long":
-        return {"direction": None, "reason": f"{HTF_BAR} trend is bearish — skipping long to avoid fighting the higher timeframe.", "raw_direction": raw_direction}
-    if htf_trend == "bullish" and direction == "short":
-        return {"direction": None, "reason": f"{HTF_BAR} trend is bullish — skipping short to avoid fighting the higher timeframe.", "raw_direction": raw_direction}
+    # HTF veto — gated by DISABLE_HTF_FILTER (backtest-research knob, default off;
+    # live always runs the filter). When disabled, HTF-disagreeing trades are kept
+    # so the backtest can measure the filter's contribution on/off.
+    if not DISABLE_HTF_FILTER:
+        if htf_trend == "bearish" and direction == "long":
+            return {"direction": None, "reason": f"{HTF_BAR} trend is bearish — skipping long to avoid fighting the higher timeframe.", "raw_direction": raw_direction}
+        if htf_trend == "bullish" and direction == "short":
+            return {"direction": None, "reason": f"{HTF_BAR} trend is bullish — skipping short to avoid fighting the higher timeframe.", "raw_direction": raw_direction}
 
     # Fade override (backtest-research, default off). Flip to the opposite side
     # only now — after every native-direction gate above has decided this bar is

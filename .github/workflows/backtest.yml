@@ -76,6 +76,10 @@ on:
         description: "How many bars a pending pullback order stays live before it expires unfilled. Live default 8. Higher = recover slow pullbacks (more fills) at the cost of acting on a staler signal."
         required: false
         default: "8"
+      disable_htf_filter:
+        description: "true = drop the higher-timeframe (4H) trend veto so HTF-disagreeing trades are kept; false (default, live) = keep the veto. Backtest-research only — measures whether the 4H filter earns its keep. Do NOT set on the live report/fill-checker workflows."
+        required: false
+        default: "false"
 
 jobs:
   backtest:
@@ -106,6 +110,7 @@ jobs:
           ATR_SL_MULT: ${{ github.event.inputs.atr_sl_mult }}   # stop distance in ATRs (live default 1.5)
           PULLBACK_ATR_MULT: ${{ github.event.inputs.pullback_atr_mult }}   # pullback entry depth in ATRs (live default 0.7)
           ENTRY_WAIT_HOURS: ${{ github.event.inputs.entry_wait_hours }}   # bars a pending order stays live (live default 8)
+          DISABLE_HTF_FILTER: ${{ github.event.inputs.disable_htf_filter }}   # drop the 4H trend veto — research knob, NOT wired to any live workflow
           OKX_PROXY: ${{ secrets.OKX_PROXY }}   # proxy OKX calls past the runner's geo-block
       - name: Upload results
         uses: actions/upload-artifact@v4

@@ -13,6 +13,33 @@ Keep this section up to date whenever a real bug fix or parameter change
 goes live — it's the reference point for whether `forward_test_report.py`'s
 numbers are even measuring the strategy you think they are.
 
+> **R:R gate and trend-strength sizing checked, both left unchanged (2026-07-21,
+> no live change).** Two more measure-first probes into whether any expectancy is
+> left on the table, both across the recent + out-of-sample (ending 2025-07-12)
+> windows at each instrument's live config:
+> - **`MIN_RR` sweep (1.2 → 2.0).** No value beats the live **1.5** in both
+>   windows. The tell is that the optimum *flips* between windows on every
+>   instrument: the recent window rewards a *higher* gate (ETH best 1.6–1.8, SOL
+>   2.0, BTC 1.6), the OOS window rewards a *lower* one (ETH 1.4, SOL 1.2, BTC
+>   1.2). That opposing pull is the fingerprint of an overfit knob, and 1.5 sits
+>   in the neutral middle — raising it toward the recent-window "optimum" measurably
+>   *degrades* OOS on ETH and SOL (SOL +0.41R recent → +0.11R OOS at 1.8). Left at
+>   **1.5**.
+> - **ADX-at-signal expectancy (regime sizing probe).** No consistent
+>   trend-strength → return relationship, so no basis for sizing up in strong
+>   trends: expectancy rises with ADX out-of-sample on ETH but falls recent; rises
+>   recent on SOL but is messy OOS; and on **BTC it falls in *both* windows** — the
+>   weakest-trend bucket (ADX 20–25) is the *best* (+0.49R), the opposite of the
+>   hypothesis. The strong 20–25 bucket also quietly re-confirms the `ADX_MIN=20`
+>   floor is well-placed. **No ADX-based sizing.**
+>
+> Net: the two levers most likely to still hold headroom are both already at their
+> robust optimum — further parameter tuning finds noise, not edge. (Funding caveat:
+> every OOS run modelled 0 funding cost, OKX's history gap, so OOS net-R slightly
+> understates a per-trade drag.) A dedicated 4H-filter on/off test
+> (`DISABLE_HTF_FILTER`, backtest-research knob, default off) was added alongside
+> this to close the last open parameter question.
+>
 > **Entry-wait extended 8h → 24h (2026-07-21, live, all instruments).** A pending
 > pullback order now stays live for **24 hours** instead of 8 before it expires
 > unfilled — `PENDING_ENTRY_LIFETIME_HOURS` (report), `PENDING_ORDER_EXPIRY_HOURS`
@@ -293,6 +320,14 @@ numbers are even measuring the strategy you think they are.
 - **Take-profit**: the next support/resistance level in that direction.
 - **Gate**: if the resulting reward:risk is below `MIN_RR` (default 1.5),
   no plan is published — you just get the reason why.
+- **Higher-timeframe filter** (`HTF_BAR`, default 4H): a long is vetoed when the
+  4H trend (EMA20 vs EMA50) is bearish and a short when it's bullish, so the trade
+  never fights the higher timeframe. `DISABLE_HTF_FILTER` (**backtest-research
+  only, default off**) turns that veto off so a filter-on vs filter-off backtest
+  can measure whether it earns its keep — the By-4H-trend diagnostic can't, since
+  it only sees trades the filter already let through. Only `backtest.py` reads it
+  (via the `disable_htf_filter` input on the Run Backtest workflow); it must stay
+  off on every live workflow so live keeps the veto.
 - **Exit management** (`EXIT_MODEL`, default `fixed` — **backtest-research only,
   not yet live**): `fixed` is set-and-forget — a filled trade runs to its
   original stop, its target, or the hold timeout, which is exactly what the live
