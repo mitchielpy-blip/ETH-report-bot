@@ -36,9 +36,36 @@ numbers are even measuring the strategy you think they are.
 > Net: the two levers most likely to still hold headroom are both already at their
 > robust optimum — further parameter tuning finds noise, not edge. (Funding caveat:
 > every OOS run modelled 0 funding cost, OKX's history gap, so OOS net-R slightly
-> understates a per-trade drag.) A dedicated 4H-filter on/off test
-> (`DISABLE_HTF_FILTER`, backtest-research knob, default off) was added alongside
-> this to close the last open parameter question.
+> understates a per-trade drag — and the drag scales with trade count.)
+>
+> **4H higher-timeframe filter on/off (2026-07-21, no live change).** Measured the
+> HTF veto directly with `DISABLE_HTF_FILTER` (filter ON = live baseline vs OFF =
+> keep the HTF-disagreeing trades), both windows, live config per instrument. Net R
+> per trade (trade count in parens):
+>
+> | Instrument | Window | Filter ON (live) | Filter OFF |
+> |---|---|---|---|
+> | ETH | recent | **+0.22R** (121) | +0.18R (160) |
+> | ETH | OOS | **+0.14R** (86) | +0.08R (132), DD 17% vs 13% |
+> | SOL | recent | **+0.34R** (121) | +0.24R (161) |
+> | SOL | OOS | **+0.24R** (105) | +0.23R (154) |
+> | BTC | recent | +0.32R (206) | **+0.34R** (279) |
+> | BTC | OOS | +0.25R (158) | **+0.33R** (239) |
+>
+> Result: the 4H filter **earns its keep on ETH and SOL** — keeping the veto wins
+> net expectancy in *both* windows *and* runs lower drawdown, so it's validated, not
+> just assumed. **BTC is the exception**: filter-OFF looks better in both windows,
+> which would normally clear the bar for a per-instrument live change (the HTF gate
+> is a signal-*generation* filter, so disabling it live is parity-safe like
+> `SKIP_SESSIONS`). But the BTC edge is not clean enough to ship: the recent window
+> (the one with funding modelled) is a near-tie that ON actually wins on drawdown
+> (7.9% vs 8.7%), and OFF's advantage concentrates in the **OOS** window — exactly
+> where funding is modelled as 0 while OFF carries ~50% more trades (239 vs 158), so
+> that +0.08R gap is inflated by uncounted per-trade funding drag. Read honestly, BTC
+> filter-off is a funding-accounting artifact plus noise, not a robust edge — so **no
+> live change**. BTC is flagged as the one place worth re-testing *if the funding
+> data gap is ever fixed*; that infra fix, not this knob, is the real dependency.
+> `DISABLE_HTF_FILTER` stays a backtest-research knob, off on every live workflow.
 >
 > **Entry-wait extended 8h → 24h (2026-07-21, live, all instruments).** A pending
 > pullback order now stays live for **24 hours** instead of 8 before it expires
@@ -325,9 +352,13 @@ numbers are even measuring the strategy you think they are.
   never fights the higher timeframe. `DISABLE_HTF_FILTER` (**backtest-research
   only, default off**) turns that veto off so a filter-on vs filter-off backtest
   can measure whether it earns its keep — the By-4H-trend diagnostic can't, since
-  it only sees trades the filter already let through. Only `backtest.py` reads it
-  (via the `disable_htf_filter` input on the Run Backtest workflow); it must stay
-  off on every live workflow so live keeps the veto.
+  it only sees trades the filter already let through. Measured on/off (see the
+  forward-test log): the filter is **validated on ETH and SOL** (keeping the veto
+  wins net expectancy in both windows and lowers drawdown); **BTC** looks slightly
+  better without it, but only in the funding-blind OOS window and with ~50% more
+  trades, so that edge is most likely a funding-accounting artifact — no live change.
+  Only `backtest.py` reads it (via the `disable_htf_filter` input on the Run Backtest
+  workflow); it must stay off on every live workflow so live keeps the veto.
 - **Exit management** (`EXIT_MODEL`, default `fixed` — **backtest-research only,
   not yet live**): `fixed` is set-and-forget — a filled trade runs to its
   original stop, its target, or the hold timeout, which is exactly what the live
