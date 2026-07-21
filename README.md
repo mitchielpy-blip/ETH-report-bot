@@ -30,22 +30,20 @@ numbers are even measuring the strategy you think they are.
 > never retrace are extended moves that make poor entries — the no-fills are
 > protective, not lost profit.
 >
-> **BTC entry-depth tuning (2026-07-20, live, BTC-only).** Swept
+> **Entry/stop multiplier sweep (2026-07-20, BTC-only stop confirmed).** Swept
 > `PULLBACK_ATR_MULT` and `ATR_SL_MULT` per-instrument across two independent
 > 12-month windows (recent + out-of-sample ending 2025-07-12), each matched to
-> live config. **BTC pullback deepened 0.7 → `PULLBACK_ATR_MULT=0.9`**: it beats
-> 0.7 out-of-sample (+0.25R → +0.29R net/trade) and ties it in-sample (+0.32R →
-> +0.33R) at a similar trade count, with both OOS half-splits positive. BTC's
-> tighter `ATR_SL_MULT=1.0` (already live) was re-confirmed as the only stop
-> width that wins both windows. Both are **BTC-only** — ETH is best-and-stable at
-> 0.7 / 1.5, SOL robust at 0.7 / 1.5 (its 0.9 pullback and 1.0 stop both fail to
-> replicate) — and both are set in `eth-report.yml` *and* `fill-checker.yml`
-> (parity). Caveat: the OOS runs captured zero funding events, so net-R
-> understates funding — a per-trade drag that only *understates* the
-> deeper-pullback edge. Also confirmed this window and left unchanged: the bias
-> score carries ~no directional information (calibration correlation ≈0; fading
-> it via `INVERT_SIGNAL` loses in every major cell), and `fixed` still beats every
-> managed-exit variant. Full sweep tables are in the parameter-research note below.
+> live config. BTC's tighter `ATR_SL_MULT=1.0` (already live) was re-confirmed as
+> the only stop width that wins both windows; ETH/SOL stay at 1.5. On entry depth,
+> BTC was the only instrument where going deeper (`PULLBACK_ATR_MULT=0.9`) raised
+> per-trade expectancy in both windows (+0.32R → +0.33R recent, +0.25R → +0.29R
+> OOS) — but 0.9 also cut BTC's fill rate from ~50% to ~35%, and that extra
+> per-trade edge wasn't worth roughly a third fewer fills, so **BTC stays at the
+> 0.7 default** (briefly ran 0.9, reverted). ETH/SOL are best at 0.7 too. Also
+> confirmed this window and left unchanged: the bias score carries ~no directional
+> information (calibration correlation ≈0; fading it via `INVERT_SIGNAL` loses in
+> every major cell), and `fixed` still beats every managed-exit variant. Full sweep
+> tables are in the parameter-research note below.
 >
 > **BTC added 2026-07-17.** `BTC-USDT-SWAP` now runs as a third instrument
 > alongside ETH and SOL (same indicator strategy, `ADX_MIN` 20, own
@@ -283,9 +281,10 @@ numbers are even measuring the strategy you think they are.
   candidate there. Confirm with a full backtest before relying on it.
 - **Entry**: a volatility-scaled pullback (`PULLBACK_ATR_MULT` × ATR from
   current price, default 0.7 — see forward-test log above for why),
-  capped at the nearest support/resistance level if closer. BTC overrides
-  this to `0.9` (a deeper entry — validated in/out of sample; see the
-  parameter-research note below); ETH/SOL stay at 0.7.
+  capped at the nearest support/resistance level if closer. All three
+  instruments use 0.7; a deeper 0.9 was tested for BTC (marginally higher
+  per-trade edge) but filled far less often, so BTC keeps 0.7 for more fills
+  (see the parameter-research note below).
 - **Stop-loss**: ATR(14) × `ATR_SL_MULT` (default 1.5) beyond entry — scales
   with current volatility instead of a fixed dollar amount. BTC overrides
   this to `1.0` (a tighter stop — validated in/out of sample); ETH/SOL stay
@@ -385,14 +384,16 @@ live:
 |------------|-----|-----|-----|-----|
 | ETH | +0.14 \| +0.12 | **+0.22 \| +0.14** | +0.15 \| +0.10 | +0.16 \| +0.23 |
 | SOL | +0.26 \| +0.14 | **+0.34 \| +0.25** | +0.15 \| +0.34 | +0.04 \| +0.24 |
-| BTC | +0.33 \| +0.13 | +0.32 \| +0.25 | **+0.33 \| +0.29** | +0.37 \| +0.38 |
+| BTC | +0.33 \| +0.13 | **+0.32 \| +0.25** | +0.33 \| +0.29 | +0.37 \| +0.38 |
 
-BTC is the only instrument where a deeper pullback replicates in both windows,
-so BTC runs `PULLBACK_ATR_MULT=0.9`: 0.9 beats 0.7 out-of-sample and ties it
-in-sample at a similar trade count. 1.2 posts the best *per-trade* number in
-both windows, but its ~20% fill rate lowers *total* compounded return in the
-recent window, so 0.9 is the balanced pick. ETH is best-and-stable at 0.7;
-SOL's 0.7 is robust while 0.9 collapses in-sample.
+All three instruments run `PULLBACK_ATR_MULT=0.7`. BTC is the one instrument
+where going *deeper* (0.9/1.2) raises per-trade expectancy in both windows, but
+each step deeper also cuts the fill rate hard (0.7 ≈ 50% fill, 0.9 ≈ 35%, 1.2 ≈
+20%). BTC briefly ran 0.9, but the extra per-trade edge (+0.32→+0.33R recent,
++0.25→+0.29R OOS) wasn't worth roughly a third fewer fills, so it was reverted to
+0.7 — still strongly positive, and far less prone to the "signal never fills"
+frustration. ETH is best-and-stable at 0.7; SOL's 0.7 is robust while 0.9
+collapses in-sample. So 0.7 is the right value everywhere.
 
 **Exits:** see the `EXIT_MODEL` table above — `fixed` wins net expectancy on
 every instrument; no managed-exit variant beats it.
