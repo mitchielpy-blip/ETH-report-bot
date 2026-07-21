@@ -137,11 +137,16 @@ def fetch_funding_history(inst_id, start_ts, end_ts):
     can charge/credit them instead of guessing.
     """
     events = []
-    after = None
+    # Seed the cursor at end_ts, NOT "now" — mirroring fetch_historical_candles.
+    # OKX returns records *earlier* than `after`, so starting from the present
+    # and paging backward means a distant out-of-sample window is only reached
+    # after traversing a year+ of recent history; OKX stops serving before we
+    # get there, and the start_ts<=ts<=end_ts filter then keeps nothing (zero
+    # funding events, silently understating cost). Seeding at end_ts jumps
+    # straight to the window, exactly as the candle fetch already does.
+    after = str(end_ts)
     while True:
-        params = {"instId": inst_id, "limit": "100"}
-        if after:
-            params["after"] = after
+        params = {"instId": inst_id, "limit": "100", "after": after}
         resp = requests.get(f"{OKX_BASE}/api/v5/public/funding-rate-history", params=params, timeout=15, proxies=OKX_PROXIES)
         resp.raise_for_status()
         data = resp.json()
