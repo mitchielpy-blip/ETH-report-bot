@@ -680,6 +680,7 @@ def main():
         print(f"CONFIG: entry_mode={bot.ENTRY_MODE} atr_sl_mult={bot.ATR_SL_MULT} "
               f"pullback_atr_mult={bot.PULLBACK_ATR_MULT} min_rr={bot.MIN_RR} "
               f"adx_min={bot.ADX_MIN} skip_sessions='{bot.SKIP_SESSIONS}' "
+              f"entry_wait={ENTRY_WAIT_CANDLES} "
               f"exit_model={bot.EXIT_MODEL} invert_signal={bot.INVERT_SIGNAL}")
 
     end_ts = parse_end_ts(args.end_date)
