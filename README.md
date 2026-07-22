@@ -13,6 +13,22 @@ Keep this section up to date whenever a real bug fix or parameter change
 goes live — it's the reference point for whether `forward_test_report.py`'s
 numbers are even measuring the strategy you think they are.
 
+> **Breakeven-stop exit measured, does not earn a live slot (2026-07-22, no live
+> change).** Tested `EXIT_MODEL=breakeven` (slide the stop to entry once a trade is
+> +1R in favour) against the live `fixed` set-and-forget, across ETH/SOL/BTC in both
+> the recent and OOS (ending 2025-07-12) windows — 12 runs, BTC at its live
+> `skip_sessions=asia`. Breakeven − fixed expectancy: ETH −0.03R / −0.02R, SOL
+> −0.06R / +0.01R, BTC −0.07R / −0.11R (recent / OOS). It fails the both-windows bar
+> on **every** instrument — at a +1R trigger it scratches more would-be winners
+> (dip back to entry, then run to target) than the losers it rescues. Its one real
+> benefit is lower drawdown on ETH (OOS 13.5% → 8.5%), but not consistently — BTC
+> OOS drawdown got *worse* (7.6% → 12.7%), so it isn't even a clean return-for-safety
+> trade. **No live change**; the strategy stays set-and-forget. Breakeven remains
+> available as a backtest-only `EXIT_MODEL` knob (as do `trailing`, unmeasured).
+> Not swept: a higher trigger (+1.5R/+2R) would scratch fewer winners, but tuning
+> `be_at_r` to rescue a null is itself an overfit risk. The bot still has no live
+> position-manager, so any exit model must never be set on a live workflow.
+>
 > **Funding data source checked; OOS funding now modeled instead of zero
 > (2026-07-22, backtest-only, no live change).** The out-of-sample runs above all
 > carried *zero* funding cost, which quietly biased every comparison toward
