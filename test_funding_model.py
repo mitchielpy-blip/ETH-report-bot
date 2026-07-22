@@ -82,6 +82,17 @@ class EstimateRecentFundingRate(unittest.TestCase):
             rate = bt.estimate_recent_funding_rate("ETH-USDT-SWAP", [])
         self.assertEqual(rate, bt.ASSUMED_FUNDING_RATE)
 
+    def test_env_override_wins_over_data(self):
+        # When ASSUMED_FUNDING_RATE is set, the explicit rate is used even if
+        # real in-window funding exists — the stress-test knob, no fetch needed.
+        real = [{"ts": 1, "rate": 0.001}]
+        with mock.patch.object(bt, "FUNDING_RATE_OVERRIDDEN", True), \
+             mock.patch.object(bt, "ASSUMED_FUNDING_RATE", 0.0005), \
+             mock.patch.object(bt, "fetch_funding_history",
+                               side_effect=AssertionError("should not fetch")):
+            rate = bt.estimate_recent_funding_rate("ETH-USDT-SWAP", real)
+        self.assertEqual(rate, 0.0005)
+
 
 class BuildFundingEvents(unittest.TestCase):
     """build_funding_events: the single entry point used by every backtest tool."""

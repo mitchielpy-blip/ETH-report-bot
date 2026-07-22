@@ -64,11 +64,16 @@ EXIT_FEE_PCT = 0.05    # stop-loss/take-profit triggers execute as market -> tak
 # back with ZERO funding events. Zero funding silently undercharged funding drag,
 # and because drag scales with time-in-market it biased comparisons toward
 # high-trade-count settings. build_funding_events() fills the un-served older gap
-# with modeled events on an 8h grid, priced at a rate estimated from whatever
-# recent funding OKX WILL serve (falling back to this constant if it serves
-# none). Real events are always kept as-is; only the gap is modeled.
+# with modeled events on an 8h grid. The rate is normally ESTIMATED from whatever
+# recent funding OKX WILL serve (its mean); real events are always kept as-is and
+# only the gap is modeled. Setting ASSUMED_FUNDING_RATE in the env OVERRIDES the
+# estimate entirely — use it to stress-test a heavier historical funding regime
+# than today's (e.g. ASSUMED_FUNDING_RATE=0.0005 for 0.05%/8h). When it is not
+# set, it also serves as the last-resort default if OKX serves no funding at all.
 FUNDING_INTERVAL_MS = 8 * 3600 * 1000   # OKX funding settles ~every 8h
-ASSUMED_FUNDING_RATE = float(os.environ.get("ASSUMED_FUNDING_RATE", "0.0001"))  # fallback per-8h rate (~0.01%, a neutral long-run perp average) when even recent funding is unavailable
+_ASSUMED_FUNDING_RATE_ENV = os.environ.get("ASSUMED_FUNDING_RATE")
+FUNDING_RATE_OVERRIDDEN = _ASSUMED_FUNDING_RATE_ENV not in (None, "")   # env set => force this rate for modeled events
+ASSUMED_FUNDING_RATE = float(_ASSUMED_FUNDING_RATE_ENV) if FUNDING_RATE_OVERRIDDEN else 0.0001  # per-8h rate (~0.01%, a neutral long-run perp average)
 
 HTF_GROUP_HOURS = 4
 HTF_GROUP_MS = HTF_GROUP_HOURS * 3600 * 1000
@@ -197,13 +202,17 @@ def _model_funding_gap(start_ts, end_ts, real, rate):
 
 def estimate_recent_funding_rate(inst_id, in_window_real):
     """
-    A per-8h funding rate to price modeled gap events. Prefer the mean of the
-    real funding already fetched for this window; if the whole window is out of
-    OKX's retention (no in-window real events at all), pull whatever funding
-    OKX serves right now and use its mean; failing even that, the flat default.
-    Signed, so the modeled drag carries the real direction (funding is usually
-    slightly positive => longs pay a little, shorts receive a little).
+    A per-8h funding rate to price modeled gap events. If ASSUMED_FUNDING_RATE
+    is set in the env, that explicit rate wins (stress-test knob). Otherwise
+    prefer the mean of the real funding already fetched for this window; if the
+    whole window is out of OKX's retention (no in-window real events at all),
+    pull whatever funding OKX serves right now and use its mean; failing even
+    that, the flat default. Signed, so the modeled drag carries the real
+    direction (funding is usually slightly positive => longs pay a little,
+    shorts receive a little).
     """
+    if FUNDING_RATE_OVERRIDDEN:
+        return ASSUMED_FUNDING_RATE          # user forced an explicit rate
     if in_window_real:
         return sum(e["rate"] for e in in_window_real) / len(in_window_real)
     served = fetch_funding_history(inst_id, 0, int(time.time() * 1000))

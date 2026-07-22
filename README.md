@@ -25,12 +25,26 @@ numbers are even measuring the strategy you think they are.
 > so it was reverted. The endpoint simply does not hold year-old funding.
 > Fix: `build_funding_events()` now keeps every real event OKX serves and fills the
 > un-served older gap with modeled events on an 8h grid, priced at the mean of
-> recent real funding (fallback `ASSUMED_FUNDING_RATE`, ~0.01%/8h). All five
-> backtest tools route through it, so funding drag is realistic — not silently
-> zero — on every window. Backtest cost estimate only; live is untouched. This
-> removes the "funding modelled as 0" caveat attached to the OOS notes below, and
-> BTC's ambiguous HTF-filter result (flagged below as a possible funding artifact)
-> is now worth a clean re-test.
+> recent real funding (set `ASSUMED_FUNDING_RATE` to override with an explicit rate
+> for stress-testing). All five backtest tools route through it, so funding drag is
+> realistic — not silently zero — on every window. Backtest cost estimate only;
+> live is untouched.
+>
+> **Measured impact: negligible, and that's the real finding.** Re-ran the ETH OOS
+> window (12mo ending 2025-07-12) on the runner: it now models 1,112 funding events
+> at +0.0022%/8h (self-estimated from OKX's current funding), yet net-R is unchanged
+> at **+0.14R** and avg funding rounds to +0.00R/trade. Two reasons: current perp
+> funding is very low, and — more fundamentally — **this strategy holds positions
+> only hours-to-a-day**, so a per-8h charge barely accrues (even at 5× the rate it's
+> ~0.01R/trade). So the "funding modelled as 0" caveat on the OOS notes below was a
+> real gap but an *immaterial* one — it never had the magnitude to flip a decision.
+> Downgraded from "treat OOS net-R as directional" to "confirmed negligible for a
+> fast strategy." (Caveat on the caveat: the rate is proxied from today's funding;
+> 2024–25 bull-phase funding ran higher, so stress-test with a heavier
+> `ASSUMED_FUNDING_RATE` if in doubt — but at these hold times it stays small.)
+> BTC's ambiguous HTF-filter result was flagged below as a possible funding
+> artifact; with drag this small, that explanation now looks weak — worth a clean
+> re-test, but don't expect funding to be what was driving it.
 >
 > **R:R gate and trend-strength sizing checked, both left unchanged (2026-07-21,
 > no live change).** Two more measure-first probes into whether any expectancy is
