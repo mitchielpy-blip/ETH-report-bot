@@ -58,6 +58,18 @@ RISK_PER_TRADE_PCT = 1.0  # for the equity curve simulation only
 ENTRY_FEE_PCT = 0.02   # pullback entry is a resting limit order -> maker fee
 EXIT_FEE_PCT = 0.05    # stop-loss/take-profit triggers execute as market -> taker fee
 
+# Funding modeling — backtest cost estimate only, NEVER touches live behaviour.
+# OKX's public funding-rate-history endpoint only serves a limited recent window
+# (a few months), so any window whose older portion predates that retention came
+# back with ZERO funding events. Zero funding silently undercharged funding drag,
+# and because drag scales with time-in-market it biased comparisons toward
+# high-trade-count settings. build_funding_events() fills the un-served older gap
+# with modeled events on an 8h grid, priced at a rate estimated from whatever
+# recent funding OKX WILL serve (falling back to this constant if it serves
+# none). Real events are always kept as-is; only the gap is modeled.
+FUNDING_INTERVAL_MS = 8 * 3600 * 1000   # OKX funding settles ~every 8h
+ASSUMED_FUNDING_RATE = float(os.environ.get("ASSUMED_FUNDING_RATE", "0.0001"))  # fallback per-8h rate (~0.01%, a neutral long-run perp average) when even recent funding is unavailable
+
 HTF_GROUP_HOURS = 4
 HTF_GROUP_MS = HTF_GROUP_HOURS * 3600 * 1000
 
@@ -164,6 +176,65 @@ def fetch_funding_history(inst_id, start_ts, end_ts):
     ]
     out.sort(key=lambda x: x["ts"])
     return out
+
+
+def _model_funding_gap(start_ts, end_ts, real, rate):
+    """
+    Merge real funding events with modeled events on an 8h grid that fill the
+    older part of [start_ts, end_ts] OKX won't serve. OKX only keeps recent
+    funding, so `real` (when non-empty) covers the newest part of the window;
+    the gap to fill is [start_ts, earliest_real_ts). Pure and testable — takes
+    the estimated `rate` as an argument. Returns (events, modeled_count).
+    """
+    gap_end = min((e["ts"] for e in real), default=int(end_ts))
+    modeled = []
+    if gap_end - int(start_ts) >= FUNDING_INTERVAL_MS:
+        first = ((int(start_ts) // FUNDING_INTERVAL_MS) + 1) * FUNDING_INTERVAL_MS
+        modeled = [{"ts": t, "rate": rate} for t in range(first, gap_end, FUNDING_INTERVAL_MS)]
+    events = sorted(real + modeled, key=lambda e: e["ts"])
+    return events, len(modeled)
+
+
+def estimate_recent_funding_rate(inst_id, in_window_real):
+    """
+    A per-8h funding rate to price modeled gap events. Prefer the mean of the
+    real funding already fetched for this window; if the whole window is out of
+    OKX's retention (no in-window real events at all), pull whatever funding
+    OKX serves right now and use its mean; failing even that, the flat default.
+    Signed, so the modeled drag carries the real direction (funding is usually
+    slightly positive => longs pay a little, shorts receive a little).
+    """
+    if in_window_real:
+        return sum(e["rate"] for e in in_window_real) / len(in_window_real)
+    served = fetch_funding_history(inst_id, 0, int(time.time() * 1000))
+    if served:
+        return sum(e["rate"] for e in served) / len(served)
+    return ASSUMED_FUNDING_RATE
+
+
+def build_funding_events(inst_id, start_ts, end_ts, verbose=True):
+    """
+    Funding events for [start_ts, end_ts] with the un-served older gap modeled.
+    This is the single funding entry point every backtest tool should use (not
+    fetch_funding_history directly), so they all charge realistic funding drag
+    on out-of-sample windows instead of the silent zero OKX's limited history
+    would otherwise leave. Backtest-only cost estimate; live is untouched.
+    """
+    real = fetch_funding_history(inst_id, start_ts, end_ts)
+    gap_end = min((e["ts"] for e in real), default=int(end_ts))
+    if gap_end - int(start_ts) < FUNDING_INTERVAL_MS:
+        if verbose:
+            print(f"Funding: {len(real)} real events, full coverage — nothing modeled.")
+        return real
+
+    rate = estimate_recent_funding_rate(inst_id, real)
+    events, modeled_count = _model_funding_gap(start_ts, end_ts, real, rate)
+    if verbose:
+        print(f"Funding: {len(real)} real + {modeled_count} MODELED events at "
+              f"{rate:+.4%}/8h over the older part of the window OKX won't serve "
+              f"(so funding drag isn't silently zero on out-of-sample runs; "
+              f"override the fallback via ASSUMED_FUNDING_RATE).")
+    return events
 
 
 def compute_trade_costs(direction, entry, risk, fill_ts, exit_ts, funding_events):
@@ -690,15 +761,8 @@ def main():
     candles = fetch_historical_candles(args.inst, args.bar, target_count, end_ts)
     print(f"Got {len(candles)} candles.")
 
-    print("Fetching real historical funding rates ...")
-    funding_events = fetch_funding_history(args.inst, candles[0]["ts"], candles[-1]["ts"])
-    period_hours = (candles[-1]["ts"] - candles[0]["ts"]) / (3600 * 1000)
-    expected_funding_events = period_hours / 8  # funding typically settles ~every 8h
-    print(f"Got {len(funding_events)} funding events (expected roughly {expected_funding_events:.0f} for this period).")
-    if expected_funding_events > 0 and len(funding_events) < expected_funding_events * 0.5:
-        print("WARNING: funding coverage looks incomplete for this period — OKX's API often only serves a")
-        print("         limited rolling window of funding history. Results below likely UNDERSTATE real funding")
-        print("         costs for the earlier part of this window. Treat the net R-multiple with extra caution.")
+    print("Building funding series (real where OKX serves it, modeled for the older gap) ...")
+    funding_events = build_funding_events(args.inst, candles[0]["ts"], candles[-1]["ts"])
     print("Running backtest ...")
 
     trades, no_fill_count, invalidated_count = run_backtest(candles, funding_events, walker=walker)

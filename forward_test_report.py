@@ -47,7 +47,7 @@ def main():
 
     print(f"Fetching real price history to check {len(signals)} logged signals ...")
     candles = bt.fetch_historical_candles(bot.INST_ID, bot.BAR, int(hours_needed))
-    funding_events = bt.fetch_funding_history(bot.INST_ID, candles[0]["ts"], candles[-1]["ts"])
+    funding_events = bt.build_funding_events(bot.INST_ID, candles[0]["ts"], candles[-1]["ts"])
     print(f"Got {len(candles)} candles and {len(funding_events)} funding events.")
 
     results = []

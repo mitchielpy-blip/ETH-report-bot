@@ -230,7 +230,7 @@ def main():
     print(f"Got {len(candles)} candles.")
 
     print("Fetching funding history ...")
-    funding_events = bt.fetch_funding_history(args.inst, candles[0]["ts"], candles[-1]["ts"])
+    funding_events = bt.build_funding_events(args.inst, candles[0]["ts"], candles[-1]["ts"])
     print(f"Got {len(funding_events)} funding events.")
 
     print("Running diagnostic backtest ...")

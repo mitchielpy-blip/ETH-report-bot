@@ -13,6 +13,25 @@ Keep this section up to date whenever a real bug fix or parameter change
 goes live — it's the reference point for whether `forward_test_report.py`'s
 numbers are even measuring the strategy you think they are.
 
+> **Funding data source checked; OOS funding now modeled instead of zero
+> (2026-07-22, backtest-only, no live change).** The out-of-sample runs above all
+> carried *zero* funding cost, which quietly biased every comparison toward
+> high-trade-count settings (more trades = more unpriced drag). Investigated the
+> root cause and it is **not** a code bug: OKX's public `funding-rate-history`
+> endpoint only serves a limited recent window (a few months), so any window whose
+> older part predates that retention comes back empty. Confirmed on the runner —
+> a first attempt that seeded the fetch cursor at the window's end date (the trick
+> that makes the *candle* fetch reach OOS) still returned `Got 0 funding events`,
+> so it was reverted. The endpoint simply does not hold year-old funding.
+> Fix: `build_funding_events()` now keeps every real event OKX serves and fills the
+> un-served older gap with modeled events on an 8h grid, priced at the mean of
+> recent real funding (fallback `ASSUMED_FUNDING_RATE`, ~0.01%/8h). All five
+> backtest tools route through it, so funding drag is realistic — not silently
+> zero — on every window. Backtest cost estimate only; live is untouched. This
+> removes the "funding modelled as 0" caveat attached to the OOS notes below, and
+> BTC's ambiguous HTF-filter result (flagged below as a possible funding artifact)
+> is now worth a clean re-test.
+>
 > **R:R gate and trend-strength sizing checked, both left unchanged (2026-07-21,
 > no live change).** Two more measure-first probes into whether any expectancy is
 > left on the table, both across the recent + out-of-sample (ending 2025-07-12)
@@ -477,12 +496,16 @@ on BTC (flat recent, +0.25R → +0.28R OOS) and SOL (flat), each with a few more
 That's now live (`PENDING_ENTRY_LIFETIME_HOURS=24`, kept equal to the fill-checker
 and backtest lifetimes).
 
-**One caveat across all of it:** OKX serves only a limited rolling window of
-funding history, so the out-of-sample runs captured **zero** funding events and
-every net-R figure understates real funding cost. Funding is a per-trade drag,
-so it biases *against* higher-trade-count settings — slightly flattering the
-tighter-stop / shallower-pullback options and slightly *understating* BTC's
-deeper-pullback edge. Treat the OOS numbers as directional, not exact.
+**One caveat across all of it (since fixed):** OKX serves only a limited rolling
+window of funding history, so the out-of-sample runs that produced the numbers
+above captured **zero** funding events and their net-R figures understate real
+funding cost. Funding is a per-trade drag, so it biased *against* higher-trade-count
+settings — slightly flattering the tighter-stop / shallower-pullback options and
+slightly *understating* BTC's deeper-pullback edge. Treat those specific OOS
+numbers as directional, not exact. **Newer runs no longer have this gap:**
+`build_funding_events()` fills the un-served older part of any window with modeled
+8h funding priced from recent real rates (see the 2026-07-22 forward-test log
+entry), so funding drag is realistic rather than zero going forward.
 
 ## Choosing a strategy (`STRATEGY` env var)
 
