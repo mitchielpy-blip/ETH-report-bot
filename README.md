@@ -13,6 +13,25 @@ Keep this section up to date whenever a real bug fix or parameter change
 goes live — it's the reference point for whether `forward_test_report.py`'s
 numbers are even measuring the strategy you think they are.
 
+> **RSI-slope entry gate measured, does not earn a live slot (2026-07-23, no live
+> change).** Tested `REQUIRE_RSI_RISING` (take a long only when RSI rose vs the prior
+> bar, a short only when it fell) against the gate-off baseline across ETH/SOL/BTC in
+> both windows — the one *orthogonal* idea from the viral "three gates" checklist
+> (the rest — RSI level, MACD-hist sign, volume, EMA trend — the bias score already
+> folds in). Per-trade expectancy jumped almost everywhere (SOL +0.5R both windows,
+> BTC OOS +0.7R) and drawdowns fell sharply — *but* it cut trade count 75–85%
+> (~120/yr → 15–29/yr), and on total compounded return (simulated equity at 1% risk)
+> the gate-off baseline wins in **all six** cells (ETH recent 127.7 vs 104.6, SOL
+> recent 147.0 vs 123.6, BTC recent 125.9 vs 109.5, and each OOS likewise). It finds
+> no new edge — it just trades less, discarding marginal-but-net-profitable signals,
+> so each surviving trade looks prettier while total profit drops. The classic
+> high-win-rate-earns-less illusion, which the source half-admits ("you won't earn
+> more, but you'll lose less that you shouldn't"). The 15–29-trade samples are also
+> too small to trust the per-trade numbers. **No live change.** Kept as a parity-safe
+> knob (`REQUIRE_RSI_RISING`) for anyone who deliberately wants fewer, calmer,
+> lower-drawdown trades at the cost of total return — a personal preference, not an
+> edge.
+>
 > **Breakeven-stop exit measured, does not earn a live slot (2026-07-22, no live
 > change).** Tested `EXIT_MODEL=breakeven` (slide the stop to entry once a trade is
 > +1R in favour) against the live `fixed` set-and-forget, across ETH/SOL/BTC in both
