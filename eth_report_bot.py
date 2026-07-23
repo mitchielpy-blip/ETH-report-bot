@@ -93,6 +93,19 @@ INVERT_SIGNAL = os.environ.get("INVERT_SIGNAL", "0").strip().lower() in ("1", "t
 # fill-checker.yml): it exists purely to measure the filter's value in the
 # backtest before any change is considered for live use.
 DISABLE_HTF_FILTER = os.environ.get("DISABLE_HTF_FILTER", "0").strip().lower() in ("1", "true", "yes")
+# Require momentum to be ACCELERATING, not just positive: only take a long when
+# RSI is higher than the prior bar (falling for a short). The bias score already
+# uses the RSI *level*; this gates on its *slope*, the one genuinely orthogonal
+# idea from the "three gates" checklist doing the rounds (most of the rest —
+# RSI>50, MACD-hist sign, volume, EMA trend — the score already folds in). Tests
+# the claim "don't enter unless momentum is increasing, not betting on a bounce".
+#
+# Unlike INVERT_SIGNAL / EXIT_MODEL this is parity-SAFE: it's a signal-generation
+# gate computed from candles (like SKIP_SESSIONS / DISABLE_HTF_FILTER), so it CAN
+# be wired live if it earns it. Default OFF for now so it's measured first; do not
+# set it on a live workflow until a filter-on vs filter-off backtest says it wins
+# in both windows.
+REQUIRE_RSI_RISING = os.environ.get("REQUIRE_RSI_RISING", "0").strip().lower() in ("1", "true", "yes")
 ATR_SL_MULT = float(os.environ.get("ATR_SL_MULT", 1.5))         # stop distance = ATR * this
 MIN_RR = float(os.environ.get("MIN_RR", 1.5))                    # minimum reward:risk to publish a plan
 PULLBACK_ATR_MULT = float(os.environ.get("PULLBACK_ATR_MULT", 0.7))  # how deep a pullback entry to seek, in ATRs
@@ -595,7 +608,7 @@ def session_for_hour(utc_hour):
     return "us"
 
 
-def suggest_trade_plan(price, score, atr_value, supports, resistances, htf_trend=None, adx_value=None, previous_raw_direction=None, require_rr=True, session=None):
+def suggest_trade_plan(price, score, atr_value, supports, resistances, htf_trend=None, adx_value=None, previous_raw_direction=None, require_rr=True, session=None, rsi_delta=None):
     """
     Rule-based entry/SL/TP suggestion. Returns a dict, or None if no setup
     clears the minimum reward:risk bar (mirrors "RR不合格，不開倉" logic).
@@ -654,6 +667,17 @@ def suggest_trade_plan(price, score, atr_value, supports, resistances, htf_trend
             return {"direction": None, "reason": f"{HTF_BAR} trend is bearish — skipping long to avoid fighting the higher timeframe.", "raw_direction": raw_direction}
         if htf_trend == "bullish" and direction == "short":
             return {"direction": None, "reason": f"{HTF_BAR} trend is bullish — skipping short to avoid fighting the higher timeframe.", "raw_direction": raw_direction}
+
+    # Momentum-slope gate — gated by REQUIRE_RSI_RISING (default off). A native-
+    # direction gate like the ones above: only take the trade when RSI is moving
+    # the trade's way (rising for a long, falling for a short), i.e. momentum is
+    # accelerating rather than merely positive. rsi_delta is RSI(now) - RSI(prev);
+    # None (insufficient data) never vetoes.
+    if REQUIRE_RSI_RISING and rsi_delta is not None:
+        if direction == "long" and rsi_delta <= 0:
+            return {"direction": None, "reason": f"RSI is not rising (Δ{rsi_delta:+.1f}) — momentum isn't confirming the long, sitting out.", "raw_direction": raw_direction}
+        if direction == "short" and rsi_delta >= 0:
+            return {"direction": None, "reason": f"RSI is not falling (Δ{rsi_delta:+.1f}) — momentum isn't confirming the short, sitting out.", "raw_direction": raw_direction}
 
     # Fade override (backtest-research, default off). Flip to the opposite side
     # only now — after every native-direction gate above has decided this bar is
@@ -739,6 +763,12 @@ def evaluate_plan(candles, previous_raw_direction=None, htf_trend=_HTF_UNSET,
     atr_value = atr(candles)
     adx_value = adx(candles)
     score = compute_bias_score(candles)
+    # RSI slope for the optional REQUIRE_RSI_RISING gate: RSI(now) - RSI(prev bar),
+    # both from the shared rsi() so live and backtest derive it identically. None
+    # when there isn't enough data for either read (the gate then never vetoes).
+    closes = [c["close"] for c in candles]
+    rsi_now, rsi_prev = rsi(closes), rsi(closes[:-1])
+    rsi_delta = (rsi_now - rsi_prev) if (rsi_now is not None and rsi_prev is not None) else None
     if htf_trend is _HTF_UNSET:
         htf_trend = higher_timeframe_trend()
     # Session of the signal bar itself (its completed-candle UTC hour), so the
@@ -752,7 +782,7 @@ def evaluate_plan(candles, previous_raw_direction=None, htf_trend=_HTF_UNSET,
                if require_rr else None)
     return suggest_trade_plan(price, score, atr_value, supports, resistances,
                               htf_trend, adx_value, previous_raw_direction, require_rr=require_rr,
-                              session=session)
+                              session=session, rsi_delta=rsi_delta)
 
 
 def build_report(candles, previous_raw_direction=None):

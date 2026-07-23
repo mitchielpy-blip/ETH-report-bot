@@ -762,7 +762,8 @@ def main():
               f"adx_min={bot.ADX_MIN} skip_sessions='{bot.SKIP_SESSIONS}' "
               f"entry_wait={ENTRY_WAIT_CANDLES} "
               f"exit_model={bot.EXIT_MODEL} invert_signal={bot.INVERT_SIGNAL} "
-              f"disable_htf_filter={bot.DISABLE_HTF_FILTER}")
+              f"disable_htf_filter={bot.DISABLE_HTF_FILTER} "
+              f"require_rsi_rising={bot.REQUIRE_RSI_RISING}")
 
     end_ts = parse_end_ts(args.end_date)
 
