@@ -13,6 +13,25 @@ Keep this section up to date whenever a real bug fix or parameter change
 goes live — it's the reference point for whether `forward_test_report.py`'s
 numbers are even measuring the strategy you think they are.
 
+> **Exit management fully swept — fixed set-and-forget is optimal, nothing to build
+> (2026-07-23, no live change).** Completed the exit-rule A/B begun with breakeven@1R
+> (lost, below) by testing the two remaining candidates vs `fixed` across ETH/SOL/BTC
+> in both windows. **Trailing** (activate +1R, trail 1R, run past target) raises win
+> rate to 54–64% but LOSES expectancy in all six cells (ETH −0.06/−0.07, SOL
+> −0.07/−0.03, BTC −0.04/−0.07 recent/OOS) and total equity in all six — it caps the
+> big target-hitting winners that are the edge. **Breakeven@2R** is a no-op: the R:R
+> gate keeps targets at ~+1.5R, below the +2R trigger, so it fires essentially never
+> (0 breakeven exits in every run) and matches fixed exactly. So across the whole
+> family — breakeven@1R (scratches winners → loses), breakeven@2R (never fires),
+> trailing (caps winners → loses) — **fixed wins or ties every cell.** Root cause:
+> the strategy's edge IS the R:R asymmetry (target at resistance is the whole
+> payoff), so any exit that closes before the target sacrifices exactly what makes it
+> profitable. **The exit-management question is closed: no live position-manager,
+> fixed stays.** The only untested variant is a thesis-flip exit (close when the raw
+> signal reverses) — a different, larger build; given how consistently exit-meddling
+> costs expectancy here, it's not worth pursuing without a specific reason.
+> `EXIT_MODEL` (fixed/breakeven/trailing) remains a backtest-only knob.
+>
 > **RSI-slope entry gate measured, does not earn a live slot (2026-07-23, no live
 > change).** Tested `REQUIRE_RSI_RISING` (take a long only when RSI rose vs the prior
 > bar, a short only when it fell) against the gate-off baseline across ETH/SOL/BTC in
