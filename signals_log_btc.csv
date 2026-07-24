@@ -163,3 +163,4 @@ logged_at_ts,price,direction,entry,stop,target,rr,reason
 1784862047860,65085.5,,,,,,Asia session is filtered out for this instrument (SKIP_SESSIONS) — sitting out.
 1784865650057,65418.5,,,,,,Signal isn't clear enough (score is in the neutral zone) — sitting out this hour.
 1784869250019,65284.4,,,,,,Asia session is filtered out for this instrument (SKIP_SESSIONS) — sitting out.
+1784872856894,65283.9,,,,,,Signal isn't clear enough (score is in the neutral zone) — sitting out this hour.
