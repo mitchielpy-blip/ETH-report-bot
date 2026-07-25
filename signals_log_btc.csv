@@ -183,3 +183,4 @@ logged_at_ts,price,direction,entry,stop,target,rr,reason
 1784934144756,64132.5,,,,,,4H trend is bullish — skipping short to avoid fighting the higher timeframe.
 1784937752374,64119.7,,,,,,4H trend is bullish — skipping short to avoid fighting the higher timeframe.
 1784941364831,64040.4,,,,,,Asia session is filtered out for this instrument (SKIP_SESSIONS) — sitting out.
+1784944856518,64031.4,,,,,,Asia session is filtered out for this instrument (SKIP_SESSIONS) — sitting out.
