@@ -191,3 +191,4 @@ logged_at_ts,price,direction,entry,stop,target,rr,reason
 1784962854152,63985.2,,,,,,Asia session is filtered out for this instrument (SKIP_SESSIONS) — sitting out.
 1784966454117,63973.1,,,,,,Asia session is filtered out for this instrument (SKIP_SESSIONS) — sitting out.
 1784970225191,63843.7,,,,,,4H trend is bullish — skipping short to avoid fighting the higher timeframe.
+1784973759607,63969.9,,,,,,4H trend is bullish — skipping short to avoid fighting the higher timeframe.
