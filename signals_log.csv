@@ -372,3 +372,4 @@ logged_at_ts,price,direction,entry,stop,target,rr,reason
 1785301258285,1904.56,,,,,,4H trend is bullish — skipping short to avoid fighting the higher timeframe.
 1785304852778,1911.45,,,,,,Signal isn't clear enough (score is in the neutral zone) — sitting out this hour.
 1785308449856,1919.18,,,,,,Signal isn't clear enough (score is in the neutral zone) — sitting out this hour.
+1785312053533,1923.48,,,,,,"ADX 19.0 is below 20.0 — market looks flat/choppy, sitting out."
