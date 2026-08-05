@@ -448,3 +448,4 @@ logged_at_ts,price,direction,entry,stop,target,rr,reason
 1785888062402,64078.0,,,,,,4H trend is bearish — skipping long to avoid fighting the higher timeframe.
 1785891656014,63967.9,,,,,,Signal isn't clear enough (score is in the neutral zone) — sitting out this hour.
 1785895253593,64312.0,,,,,,Signal isn't clear enough (score is in the neutral zone) — sitting out this hour.
+1785898859300,64337.0,,,,,,Asia session is filtered out for this instrument (SKIP_SESSIONS) — sitting out.
