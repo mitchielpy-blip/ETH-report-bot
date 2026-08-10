@@ -655,3 +655,4 @@ logged_at_ts,price,direction,entry,stop,target,rr,reason
 1786345253825,1927.0,,,,,,Long signal just appeared this hour — waiting one more hour to confirm it's not noise.
 1786348848213,1924.5,,,,,,"Risk:reward is 0.59, below the 1.5 threshold — sitting out this hour."
 1786352458714,1925.91,,,,,,"Risk:reward is 0.53, below the 1.5 threshold — sitting out this hour."
+1786356051751,1915.7,,,,,,"Risk:reward is 0.86, below the 1.5 threshold — sitting out this hour."
