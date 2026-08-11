@@ -598,3 +598,4 @@ logged_at_ts,price,direction,entry,stop,target,rr,reason
 1786453250456,64300.0,,,,,,Short signal just appeared this hour — waiting one more hour to confirm it's not noise.
 1786456865628,64182.2,,,,,,4H trend is bullish — skipping short to avoid fighting the higher timeframe.
 1786460453259,63750.1,,,,,,4H trend is bullish — skipping short to avoid fighting the higher timeframe.
+1786464053815,63584.7,,,,,,4H trend is bullish — skipping short to avoid fighting the higher timeframe.
