@@ -684,3 +684,4 @@ logged_at_ts,price,direction,entry,stop,target,rr,reason
 1786449654714,1892.2,,,,,,Signal isn't clear enough (score is in the neutral zone) — sitting out this hour.
 1786453249300,1887.0,,,,,,Short signal just appeared this hour — waiting one more hour to confirm it's not noise.
 1786456864677,1889.23,,,,,,4H trend is bullish — skipping short to avoid fighting the higher timeframe.
+1786460452218,1873.02,,,,,,4H trend is bullish — skipping short to avoid fighting the higher timeframe.
