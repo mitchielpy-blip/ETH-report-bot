@@ -758,3 +758,4 @@ logged_at_ts,price,direction,entry,stop,target,rr,reason
 1786719650686,75.22,,,,,,"ADX 19.9 is below 20.0 — market looks flat/choppy, sitting out."
 1786723250196,75.61,,,,,,"ADX 19.7 is below 20.0 — market looks flat/choppy, sitting out."
 1786726850902,75.43,,,,,,"ADX 19.5 is below 20.0 — market looks flat/choppy, sitting out."
+1786730450666,75.25,,,,,,4H trend is bullish — skipping short to avoid fighting the higher timeframe.
