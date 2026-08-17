@@ -816,3 +816,4 @@ logged_at_ts,price,direction,entry,stop,target,rr,reason
 1786928448214,1878.2,,,,,,"Risk:reward is 0.77, below the 1.5 threshold — sitting out this hour."
 1786932051392,1890.62,,,,,,Signal isn't clear enough (score is in the neutral zone) — sitting out this hour.
 1786935647872,1901.62,,,,,,Long signal just appeared this hour — waiting one more hour to confirm it's not noise.
+1786939250932,1900.09,,,,,,4H trend is bearish — skipping long to avoid fighting the higher timeframe.
