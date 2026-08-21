@@ -914,3 +914,4 @@ logged_at_ts,price,direction,entry,stop,target,rr,reason
 1787281247499,2344.71,,,,,,"Risk:reward is 0.88, below the 1.5 threshold — sitting out this hour."
 1787284847727,2340.04,,,,,,Signal isn't clear enough (score is in the neutral zone) — sitting out this hour.
 1787288454940,2353.5,,,,,,Signal isn't clear enough (score is in the neutral zone) — sitting out this hour.
+1787292047741,2367.44,,,,,,Signal isn't clear enough (score is in the neutral zone) — sitting out this hour.
