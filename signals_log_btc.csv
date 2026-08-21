@@ -824,3 +824,4 @@ logged_at_ts,price,direction,entry,stop,target,rr,reason
 1787270453418,72996.6,,,,,,Long signal just appeared this hour — waiting one more hour to confirm it's not noise.
 1787274047281,73672.4,,,,,,Asia session is filtered out for this instrument (SKIP_SESSIONS) — sitting out.
 1787277653704,75101.5,,,,,,Asia session is filtered out for this instrument (SKIP_SESSIONS) — sitting out.
+1787281248677,74411.1,,,,,,Asia session is filtered out for this instrument (SKIP_SESSIONS) — sitting out.
