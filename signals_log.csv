@@ -1171,3 +1171,4 @@ logged_at_ts,price,direction,entry,stop,target,rr,reason
 1788206453470,2480.84,,,,,,Long signal just appeared this hour — waiting one more hour to confirm it's not noise.
 1788210051281,2471.71,,,,,,"Risk:reward is 0.90, below the 1.5 threshold — sitting out this hour."
 1788213652720,2477.33,,,,,,"Risk:reward is 0.71, below the 1.5 threshold — sitting out this hour."
+1788217253293,2468.31,,,,,,"ADX 19.5 is below 20.0 — market looks flat/choppy, sitting out."
