@@ -1190,3 +1190,4 @@ logged_at_ts,price,direction,entry,stop,target,rr,reason
 1788588055357,79540.2,,,,,,Signal isn't clear enough (score is in the neutral zone) — sitting out this hour.
 1788591657225,79603.8,,,,,,Signal isn't clear enough (score is in the neutral zone) — sitting out this hour.
 1788595256552,79672.3,,,,,,Asia session is filtered out for this instrument (SKIP_SESSIONS) — sitting out.
+1788598855132,79612.0,long,79497.315,79333.47928571429,81358.8857142857,11.36242315908793,
