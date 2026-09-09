@@ -1366,3 +1366,4 @@ logged_at_ts,price,direction,entry,stop,target,rr,reason
 1788908452993,2487.96,,,,,,Signal isn't clear enough (score is in the neutral zone) — sitting out this hour.
 1788912061897,2484.11,,,,,,Signal isn't clear enough (score is in the neutral zone) — sitting out this hour.
 1788915651752,2495.3,,,,,,Signal isn't clear enough (score is in the neutral zone) — sitting out this hour.
+1788919254917,2496.49,,,,,,"ADX 9.5 is below 20.0 — market looks flat/choppy, sitting out."
