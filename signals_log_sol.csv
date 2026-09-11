@@ -1435,3 +1435,4 @@ logged_at_ts,price,direction,entry,stop,target,rr,reason
 1789156856732,101.95,,,,,,Signal isn't clear enough (score is in the neutral zone) — sitting out this hour.
 1789160456854,102.42,,,,,,Long signal just appeared this hour — waiting one more hour to confirm it's not noise.
 1789164088505,102.05,,,,,,4H trend is bearish — skipping long to avoid fighting the higher timeframe.
+1789167652650,101.83,,,,,,4H trend is bearish — skipping long to avoid fighting the higher timeframe.
