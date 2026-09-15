@@ -1517,3 +1517,4 @@ logged_at_ts,price,direction,entry,stop,target,rr,reason
 1789455652067,2484.92,,,,,,Short signal just appeared this hour — waiting one more hour to confirm it's not noise.
 1789459249822,2472.9,,,,,,4H trend is bullish — skipping short to avoid fighting the higher timeframe.
 1789462860562,2476.19,,,,,,"ADX 19.6 is below 20.0 — market looks flat/choppy, sitting out."
+1789466451538,2473.15,,,,,,"ADX 18.8 is below 20.0 — market looks flat/choppy, sitting out."
