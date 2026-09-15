@@ -1529,3 +1529,4 @@ logged_at_ts,price,direction,entry,stop,target,rr,reason
 1789498854999,2401.68,,,,,,4H trend is bullish — skipping short to avoid fighting the higher timeframe.
 1789502454307,2415.52,,,,,,"Risk:reward is 0.56, below the 1.5 threshold — sitting out this hour."
 1789506055957,2406.52,short,2428.0105,2474.0615714285714,2358.933892857143,1.4999999999999951,
+1789509655006,2389.47,short,2411.028,2457.223714285714,2341.7344285714285,1.5000000000000049,
