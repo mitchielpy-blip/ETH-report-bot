@@ -1589,3 +1589,4 @@ logged_at_ts,price,direction,entry,stop,target,rr,reason
 1789714861091,105.52,,,,,,4H trend is bearish — skipping long to avoid fighting the higher timeframe.
 1789718460904,105.74,,,,,,"Risk:reward is 0.66, below the 1.5 threshold — sitting out this hour."
 1789722058181,106.28,long,105.626,104.22457142857144,107.72814285714286,1.5,
+1789725658026,106.38,long,105.70899999999999,104.27114285714285,107.8657857142857,1.5000000000000049,
