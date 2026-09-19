@@ -1534,3 +1534,4 @@ logged_at_ts,price,direction,entry,stop,target,rr,reason
 1789830055630,81547.3,,,,,,Long signal just appeared this hour — waiting one more hour to confirm it's not noise.
 1789833652334,81618.5,long,81452.76,81215.98857142856,81807.91714285714,1.5,
 1789837253347,81808.2,long,81629.19499999999,81373.47357142856,82012.77714285713,1.4999999999999716,
+1789840855890,81431.2,,,,,,Signal isn't clear enough (score is in the neutral zone) — sitting out this hour.
