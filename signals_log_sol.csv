@@ -1843,3 +1843,4 @@ logged_at_ts,price,direction,entry,stop,target,rr,reason
 1790629259248,118.77,,,,,,4H trend is bullish — skipping short to avoid fighting the higher timeframe.
 1790632855506,117.66,,,,,,4H trend is bullish — skipping short to avoid fighting the higher timeframe.
 1790636453164,118.55,,,,,,4H trend is bullish — skipping short to avoid fighting the higher timeframe.
+1790640058625,118.83,,,,,,Signal isn't clear enough (score is in the neutral zone) — sitting out this hour.
