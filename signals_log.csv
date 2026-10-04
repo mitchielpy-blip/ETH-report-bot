@@ -1977,3 +1977,4 @@ logged_at_ts,price,direction,entry,stop,target,rr,reason
 1791111655007,2700.24,,,,,,"Risk:reward is 1.05, below the 1.5 threshold — sitting out this hour."
 1791115258559,2698.92,long,2694.224,2684.161142857143,2709.3182857142856,1.5,
 1791118854887,2694.01,,,,,,"Risk:reward is 0.87, below the 1.5 threshold — sitting out this hour."
+1791122457278,2697.99,,,,,,"Risk:reward is 0.56, below the 1.5 threshold — sitting out this hour."
