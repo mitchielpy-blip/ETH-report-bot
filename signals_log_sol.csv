@@ -2054,3 +2054,4 @@ logged_at_ts,price,direction,entry,stop,target,rr,reason
 1791396057854,116.25,,,,,,4H trend is bullish — skipping short to avoid fighting the higher timeframe.
 1791399661027,116.09,,,,,,4H trend is bullish — skipping short to avoid fighting the higher timeframe.
 1791403258619,115.8,short,116.4075,117.70928571428571,114.45482142857144,1.4999999999999944,
+1791406856632,116.16,short,116.7645,118.05985714285714,114.82146428571428,1.5,
