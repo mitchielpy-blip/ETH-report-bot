@@ -2102,3 +2102,4 @@ logged_at_ts,price,direction,entry,stop,target,rr,reason
 1791882051487,83548.0,,,,,,Long signal just appeared this hour — waiting one more hour to confirm it's not noise.
 1791885650445,83593.8,,,,,,4H trend is bearish — skipping long to avoid fighting the higher timeframe.
 1791889254924,83315.4,,,,,,"ADX 19.5 is below 20.0 — market looks flat/choppy, sitting out."
+1791892854183,83326.8,,,,,,"ADX 19.0 is below 20.0 — market looks flat/choppy, sitting out."
