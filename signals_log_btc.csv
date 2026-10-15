@@ -2149,3 +2149,4 @@ logged_at_ts,price,direction,entry,stop,target,rr,reason
 1792051251971,81489.1,,,,,,Asia session is filtered out for this instrument (SKIP_SESSIONS) — sitting out.
 1792054851716,81339.1,short,81778.865,82407.10071428573,80646.18000000001,1.8029618091480426,
 1792058456107,81231.4,short,81663.29,82280.27571428572,80646.18000000001,1.6485146680867386,
+1792062051146,81000.1,,,,,,"Risk:reward is 1.22, below the 1.5 threshold — sitting out this hour."
