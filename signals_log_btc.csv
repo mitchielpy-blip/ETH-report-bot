@@ -2208,3 +2208,4 @@ logged_at_ts,price,direction,entry,stop,target,rr,reason
 1792263650431,81473.5,short,81587.59,81750.57571428572,81239.03333333334,2.138571887690843,
 1792267252602,81568.3,,,,,,"ADX 19.3 is below 20.0 — market looks flat/choppy, sitting out."
 1792270851379,81613.9,,,,,,Signal isn't clear enough (score is in the neutral zone) — sitting out this hour.
+1792274451755,81100.0,,,,,,Short signal just appeared this hour — waiting one more hour to confirm it's not noise.
