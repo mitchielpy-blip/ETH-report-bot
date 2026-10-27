@@ -2440,3 +2440,4 @@ logged_at_ts,price,direction,entry,stop,target,rr,reason
 1793098858331,79944.3,short,80187.22,80534.24857142857,79537.80666666667,1.8713540809045435,
 1793102454429,79883.7,short,80124.095,80467.51642857143,79537.80666666667,1.707197875718439,
 1793106053948,80331.8,,,,,,Signal isn't clear enough (score is in the neutral zone) — sitting out this hour.
+1793109658012,80014.1,,,,,,Short signal just appeared this hour — waiting one more hour to confirm it's not noise.
