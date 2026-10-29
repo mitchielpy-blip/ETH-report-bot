@@ -2576,3 +2576,4 @@ logged_at_ts,price,direction,entry,stop,target,rr,reason
 1793275253533,100.32,,,,,,"Risk:reward is 0.77, below the 1.5 threshold — sitting out this hour."
 1793278857407,100.49,,,,,,"ADX 19.7 is below 20.0 — market looks flat/choppy, sitting out."
 1793282455850,100.61,,,,,,"ADX 18.5 is below 20.0 — market looks flat/choppy, sitting out."
+1793286054470,101.73,,,,,,Signal isn't clear enough (score is in the neutral zone) — sitting out this hour.
