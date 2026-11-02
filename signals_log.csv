@@ -2662,3 +2662,4 @@ logged_at_ts,price,direction,entry,stop,target,rr,reason
 1793584852840,2288.74,,,,,,Long signal just appeared this hour — waiting one more hour to confirm it's not noise.
 1793588466967,2294.22,,,,,,4H trend is bearish — skipping long to avoid fighting the higher timeframe.
 1793592053170,2308.08,,,,,,4H trend is bearish — skipping long to avoid fighting the higher timeframe.
+1793595652243,2292.07,,,,,,4H trend is bearish — skipping long to avoid fighting the higher timeframe.
