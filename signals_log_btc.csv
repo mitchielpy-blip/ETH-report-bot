@@ -2576,3 +2576,4 @@ logged_at_ts,price,direction,entry,stop,target,rr,reason
 1793588468133,78413.4,,,,,,"ADX 19.5 is below 20.0 — market looks flat/choppy, sitting out."
 1793592054228,78582.2,,,,,,Asia session is filtered out for this instrument (SKIP_SESSIONS) — sitting out.
 1793595653309,78373.3,,,,,,Asia session is filtered out for this instrument (SKIP_SESSIONS) — sitting out.
+1793599253010,78340.9,,,,,,Asia session is filtered out for this instrument (SKIP_SESSIONS) — sitting out.
