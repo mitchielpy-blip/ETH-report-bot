@@ -2844,3 +2844,4 @@ logged_at_ts,price,direction,entry,stop,target,rr,reason
 1794243654823,86.98,,,,,,Short signal just appeared this hour — waiting one more hour to confirm it's not noise.
 1794247253599,86.57,,,,,,"ADX 19.2 is below 20.0 — market looks flat/choppy, sitting out."
 1794250849013,86.5,,,,,,"ADX 18.4 is below 20.0 — market looks flat/choppy, sitting out."
+1794254446901,86.49,,,,,,"ADX 17.4 is below 20.0 — market looks flat/choppy, sitting out."
