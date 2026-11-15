@@ -2883,3 +2883,4 @@ logged_at_ts,price,direction,entry,stop,target,rr,reason
 1794697247422,63509.2,short,64048.545,64819.03785714285,62892.805714285714,1.5000000000000047,
 1794700848450,64124.8,short,64681.595,65477.01642857143,63488.46285714286,1.5,
 1794704449552,63394.8,,,,,,Asia session is filtered out for this instrument (SKIP_SESSIONS) — sitting out.
+1794708048499,62592.7,,,,,,Asia session is filtered out for this instrument (SKIP_SESSIONS) — sitting out.
