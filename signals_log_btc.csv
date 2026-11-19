@@ -2998,3 +2998,4 @@ logged_at_ts,price,direction,entry,stop,target,rr,reason
 1795114853502,62859.9,,,,,,"ADX 19.6 is below 20.0 — market looks flat/choppy, sitting out."
 1795118446143,62341.0,short,62726.245,63276.595,61900.72,1.5000000000000067,
 1795122046886,62097.7,,,,,,"Risk:reward is 1.37, below the 1.5 threshold — sitting out this hour."
+1795125648414,61514.3,,,,,,"Risk:reward is 0.91, below the 1.5 threshold — sitting out this hour."
