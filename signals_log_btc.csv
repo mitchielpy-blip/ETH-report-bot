@@ -3003,3 +3003,4 @@ logged_at_ts,price,direction,entry,stop,target,rr,reason
 1795132849629,61949.1,,,,,,"Risk:reward is 1.04, below the 1.5 threshold — sitting out this hour."
 1795136447751,62120.0,,,,,,Asia session is filtered out for this instrument (SKIP_SESSIONS) — sitting out.
 1795140044666,61547.2,,,,,,Asia session is filtered out for this instrument (SKIP_SESSIONS) — sitting out.
+1795143648178,62245.6,,,,,,Asia session is filtered out for this instrument (SKIP_SESSIONS) — sitting out.
