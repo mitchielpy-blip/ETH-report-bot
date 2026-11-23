@@ -3073,3 +3073,4 @@ logged_at_ts,price,direction,entry,stop,target,rr,reason
 1795384850665,60922.9,,,,,,4H trend is bearish — skipping long to avoid fighting the higher timeframe.
 1795388454829,61081.5,,,,,,4H trend is bearish — skipping long to avoid fighting the higher timeframe.
 1795392050342,61240.0,,,,,,4H trend is bearish — skipping long to avoid fighting the higher timeframe.
+1795395654728,61315.2,,,,,,Asia session is filtered out for this instrument (SKIP_SESSIONS) — sitting out.
