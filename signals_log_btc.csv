@@ -3106,3 +3106,4 @@ logged_at_ts,price,direction,entry,stop,target,rr,reason
 1795503648261,60442.0,,,,,,Signal isn't clear enough (score is in the neutral zone) — sitting out this hour.
 1795507251259,60400.1,,,,,,Asia session is filtered out for this instrument (SKIP_SESSIONS) — sitting out.
 1795510851085,60223.1,,,,,,"Risk:reward is 1.05, below the 1.5 threshold — sitting out this hour."
+1795514449715,59964.0,,,,,,"Risk:reward is 1.19, below the 1.5 threshold — sitting out this hour."
