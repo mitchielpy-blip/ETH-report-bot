@@ -3235,3 +3235,4 @@ logged_at_ts,price,direction,entry,stop,target,rr,reason
 1795654861896,70.81,,,,,,Signal isn't clear enough (score is in the neutral zone) — sitting out this hour.
 1795658450500,71.1,,,,,,Signal isn't clear enough (score is in the neutral zone) — sitting out this hour.
 1795662051647,71.13,,,,,,Signal isn't clear enough (score is in the neutral zone) — sitting out this hour.
+1795665647681,70.99,,,,,,Long signal just appeared this hour — waiting one more hour to confirm it's not noise.
